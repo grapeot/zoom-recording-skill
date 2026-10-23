@@ -1,0 +1,96 @@
+{
+ "status": true,
+ "errorCode": 0,
+ "errorMessage": null,
+ "result": {
+  "disableDownload": false,
+  "hostName": "Alice Example",
+  "transcriptStatusMap": {
+   "file-transcript-1": "OK"
+  },
+  "clipFilesResultMap": {
+   "1717270623000": [
+    {
+     "id": "file-video-1",
+     "iconType": "video",
+     "displayFileName": "Shared screen with speaker view",
+     "fileName": "GMT_TEST_1_video.mp4",
+     "fileSize": 4000,
+     "videoDuration": 1740000,
+     "recordingStatus": 100,
+     "meetingId": "TESTMEETINGAAAAAAAAAAA=="
+    },
+    {
+     "id": "file-audio-1",
+     "iconType": "audio",
+     "displayFileName": "Audio only",
+     "fileName": "GMT_TEST_1_audio.m4a",
+     "fileSize": 1000,
+     "videoDuration": 1740000,
+     "recordingStatus": 100,
+     "meetingId": "TESTMEETINGAAAAAAAAAAA=="
+    },
+    {
+     "id": "file-transcript-1",
+     "iconType": "audio-transcript",
+     "displayFileName": "Audio transcript - English(original)",
+     "fileName": "GMT_TEST_1_transcript.vtt",
+     "fileSize": 300,
+     "videoDuration": 0,
+     "recordingStatus": 100,
+     "meetingId": "TESTMEETINGAAAAAAAAAAA=="
+    },
+    {
+     "id": "file-chat-1",
+     "iconType": "chatfile",
+     "displayFileName": "Chat file",
+     "fileName": "GMT_TEST_1_chat.txt",
+     "fileSize": 50,
+     "videoDuration": 0,
+     "recordingStatus": 100,
+     "meetingId": "TESTMEETINGAAAAAAAAAAA=="
+    }
+   ],
+   "1717274223000": [
+    {
+     "id": "file-video-2",
+     "iconType": "video",
+     "displayFileName": "Shared screen with speaker view",
+     "fileName": "GMT_TEST_2_video.mp4",
+     "fileSize": 2000,
+     "videoDuration": 600000,
+     "recordingStatus": 100,
+     "meetingId": "TESTMEETINGAAAAAAAAAAA=="
+    },
+    {
+     "id": "file-poll-2",
+     "iconType": "poll",
+     "displayFileName": "Poll",
+     "fileName": "GMT_TEST_2_poll.csv",
+     "fileSize": 10,
+     "videoDuration": 0,
+     "recordingStatus": 0,
+     "meetingId": "TESTMEETINGAAAAAAAAAAA=="
+    }
+   ]
+  },
+  "clipInfoResultMap": {
+   "1717270623000": {
+    "currentClipIndex": 1,
+    "clipDuration": "00:29:00"
+   },
+   "1717274223000": {
+    "currentClipIndex": 2,
+    "clipDuration": "00:10:00"
+   }
+  },
+  "meet": {
+   "meetingId": "TESTMEETINGAAAAAAAAAAA==",
+   "topic": "Example Workshop: Week 1",
+   "meetingStartTime": 1717270623000,
+   "meetingTimezone": "America/Los_Angeles",
+   "meetingDurationInMs": 2340000,
+   "hostId": "HOST_TEST"
+  }
+ }
+}

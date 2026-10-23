@@ -23,7 +23,7 @@ The web page the owner already uses lists recordings and hands out per-file down
 2. Before every attach, the tool checks that the process listening on the port was started with the declared profile. It refuses any other browser.
 3. `list` loads the recordings page. The page itself requests its list (`POST /nws/recording/1.0/host-list`); the tool intercepts that request and rewrites only its form fields (`from`, `to`, `p`, `search_value`), then reads the JSON response. The page's own headers, including its session headers, pass through untouched and unread.
 4. `show <id>` opens the recording's detail page and reads the page's own detail response (`GET /nws/recording/1.0/detail`): clips, files, types, sizes, durations, processing state.
-5. `download <id> --execute` opens the detail page, intercepts the batch-download response (`/nws/recording/1.0/download-meeting/...`) that the page requests when its "Download" button is pressed, and replaces the list the page receives with an empty one, so Chrome itself downloads nothing. The tool then presses that button (and the confirmation dialog's "Download", when shown) through the click guard. The response contains one signed link per file; the tool matches each to a file by name and streams it to disk with HTTP range requests.
+5. `download <id> --execute` opens the detail page, intercepts the batch-download response (`/nws/recording/1.0/download-meeting/...`) that the page requests when its "Download" button is pressed, and replaces the list the page receives with an empty one, so Chrome itself downloads nothing. The tool then presses that button (and the confirmation dialog's "Download", when shown) through the click guard. The response contains one signed link per file; the tool matches each to a file by name and fetches it in 16 MB ranges through the browser context's request API. Zoom only honors these links together with the browser session's cookies and a Zoom `Referer`, so the bytes are requested by the browser's own network stack; the tool never sees the cookies.
 6. Each file is written to `<name>.part`, resumed from its current size on the next run, checked against the size Zoom reports, hashed (sha256; md5 compared with the server's ETag when the ETag is a plain md5), and renamed into place. Video and audio are checked with `ffprobe` when it is installed; transcripts and captions are checked for a WebVTT header and at least one cue.
 7. `manifest.json` in the meeting folder records topic, start time, time zone, duration, and for every file its type, Zoom display name, local name, size, hashes and verification results. It never records signed links.
 
@@ -46,7 +46,7 @@ The web page the owner already uses lists recordings and hands out per-file down
 | `guard.py` | click guard and mutation request guard |
 | `zoomweb.py` | page driving: list interception, detail capture, batch-link capture |
 | `parse.py` | pure parsing of list and detail payloads into records |
-| `fetch.py` | resumable ranged download, hashing |
+| `fetch.py` | resumable ranged download through the browser context, hashing |
 | `verify.py` | ffprobe and WebVTT checks |
 | `manifest.py` | folder naming, file naming, manifest read/write |
 | `redact.py` | scrubbing of URLs, query strings and token-like strings |
