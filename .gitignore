@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+dist/
+build/
+.DS_Store
+
+# Browser profiles, downloads and local work products never belong in the repo
+.zoom-recording/
+browser-profile/
+zoom-recordings/
+.local/
+outputs/
+*.log
+.env
+.env.*
+!.env.example
+
+# Media and meeting artifacts
+*.mp4
+*.m4a
+*.mp3
+*.mov
+*.wav
+*.vtt
+*.srt
+*.txt
+!requirements*.txt
+*.part
+*.png
+*.jpg
+*.jpeg
+
+# Captured payloads and manifests may contain meeting details; only sanitized fixtures are tracked
+*.json
+!tests/fixtures/*.json
