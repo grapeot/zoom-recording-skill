@@ -70,8 +70,11 @@ def save(folder: Path, data: dict[str, Any]) -> Path:
 
 
 def completed(entry: dict[str, Any] | None, folder: Path) -> bool:
-    """A manifest entry counts as done when its file exists with the recorded size and hash."""
+    """A manifest entry counts as done when it has a hash, its content check did not fail, and its
+    file exists with the recorded size. (The hash is not recomputed here.)"""
     if not entry or not entry.get("sha256") or not entry.get("local_name"):
+        return False
+    if isinstance(entry.get("check"), dict) and entry["check"].get("ok") is False:
         return False
     p = folder / entry["local_name"]
     return p.is_file() and p.stat().st_size == entry.get("bytes")

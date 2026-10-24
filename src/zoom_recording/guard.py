@@ -89,8 +89,11 @@ def is_mutation(url: str, method: str, resource_type: str = "xhr") -> bool:
     return method.upper() != "GET" and bool(MUTATION_PATH.search(path))
 
 
-def install_request_guard(page: Any, blocked: list[str]) -> Callable[[], None]:
-    """Abort mutation-looking requests on `page`; blocked paths are appended to `blocked`.
+def install_request_guard(target: Any, blocked: list[str]) -> Callable[[], None]:
+    """Abort mutation-looking requests; blocked paths are appended to `blocked`.
+
+    `target` is the browser context (covers every tab, popups and, in Chromium, service-worker
+    requests) or a single page.
 
     Returns a function that removes the guard.
     """
@@ -107,5 +110,5 @@ def install_request_guard(page: Any, blocked: list[str]) -> Callable[[], None]:
         else:
             route.fallback()
 
-    page.route(matcher, handler)
-    return lambda: page.unroute(matcher, handler)
+    target.route(matcher, handler)
+    return lambda: target.unroute(matcher, handler)

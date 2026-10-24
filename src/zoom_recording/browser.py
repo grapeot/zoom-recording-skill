@@ -137,7 +137,8 @@ def launch(session: Session, url: str = RECORDINGS_URL) -> dict[str, Any]:
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            return {"ok": False, "error": "chrome_exited", "log": str(log_path)}
+            return {"ok": False, "error": "chrome_exited", "message": "Chrome exited right after starting; see the log",
+                    "log": str(log_path)}
         try:
             with urllib.request.urlopen(f"{session.endpoint}/json/version", timeout=2) as r:
                 json.loads(r.read())
@@ -146,7 +147,8 @@ def launch(session: Session, url: str = RECORDINGS_URL) -> dict[str, Any]:
                     "next": "Sign in to Zoom in the new Chrome window, then run `zoom-rec status`."}
         except Exception:  # noqa: BLE001 - wait for the port
             time.sleep(0.3)
-    return {"ok": False, "error": "cdp_timeout", "log": str(log_path)}
+    return {"ok": False, "error": "cdp_timeout", "message": "the DevTools endpoint did not come up within 20 s",
+            "log": str(log_path)}
 
 
 def browser_matches(cmdlines: list[str], port: int, profile_dir: Path) -> bool:

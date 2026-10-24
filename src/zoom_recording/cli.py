@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from . import __version__, browser, fetch, guard, manifest, parse, verify, zoomweb
-from .paths import ConfigError, resolve_home
+from .paths import ConfigError, enclosing_git_repo, resolve_home
 from .redact import scrub
 
 SIGN_IN_ACTION = ("Sign in to Zoom in the Chrome window the tool drives (run `zoom-rec browser` if it is "
@@ -28,6 +28,12 @@ class UsageError(Exception):
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:  # type: ignore[override]
         raise UsageError(message)
+
+
+class _VersionAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):  # noqa: ANN001
+        emit({"ok": True, "version": __version__})
+        parser.exit(0)
 
 
 def emit(obj: dict[str, Any]) -> None:
@@ -60,7 +66,7 @@ def attached(args: argparse.Namespace) -> Iterator[tuple[Any, list[str], list[st
         _, context = browser.connect(p, session)
         page = browser.work_tab(context)
         blocked: list[str] = []
-        remove = guard.install_request_guard(page, blocked)
+        remove = guard.install_request_guard(context, blocked)
         try:
             yield page, blocked, warnings
         finally:
@@ -103,16 +109,21 @@ def cmd_list(args: argparse.Namespace) -> dict[str, Any]:
     if frm > to:
         raise UsageError("--from is after --to")
     base = {"from": zoomweb.page_date(frm), "to": zoomweb.page_date(to), "search_value": args.query or ""}
+    if args.max_pages < 1:
+        raise UsageError("--max-pages must be at least 1")
     recs: list[dict[str, Any]] = []
+    seen: set[str] = set()
     total = None
     with attached(args) as (page, blocked, warnings):
         pg = 1
         while pg <= args.max_pages:
             listing = parse.parse_list(zoomweb.load_list(page, {**base, "p": str(pg)}))
             total = listing["total"]
-            recs.extend(listing["recordings"])
+            new = [r for r in listing["recordings"] if r["id"] not in seen]
+            seen.update(r["id"] for r in new)
+            recs.extend(new)
             log(f"page {pg}: {len(listing['recordings'])} recordings (total {total})")
-            if not listing["recordings"] or total is None or len(recs) >= total:
+            if not new or total is None or len(recs) >= total:
                 break
             pg += 1
         out = {"ok": True, "from": frm.isoformat(), "to": to.isoformat(), "query": args.query or None,
@@ -177,13 +188,23 @@ def cmd_download(args: argparse.Namespace) -> dict[str, Any]:
                     "message": "Zoom reports downloads are disabled for this recording", **_extras(blocked, warnings)}
         manifest.assign_local_names(detail["clips"])
         folder = _meeting_folder(args, detail)
+        if args.clip is not None and args.clip not in [c["index"] for c in detail["clips"]]:
+            raise UsageError(f"--clip {args.clip} does not exist; this recording has clips "
+                             f"{[c['index'] for c in detail['clips']]}")
         man = manifest.load(folder)
-        if man and man.get("meeting", {}).get("id") not in (None, detail["id"]):
+        old_meeting = man.get("meeting") if isinstance(man.get("meeting"), dict) else {}
+        if old_meeting.get("id") not in (None, detail["id"]):
             return {"ok": False, "error": "folder_in_use",
-                    "message": "the output folder holds a manifest for a different meeting", "folder": str(folder)}
-        entries: dict[str, Any] = dict(man.get("files", {}))
+                    "message": "the output folder holds a manifest for a different meeting", "folder": str(folder),
+                    **_extras(blocked, warnings)}
+        old_files = man.get("files") if isinstance(man.get("files"), dict) else {}
+        entries: dict[str, Any] = dict(old_files)
         items, missing = _plan(detail, types, args.clip, folder, entries)
-        meeting = {k: detail[k] for k in ("id", "topic", "start", "timezone", "duration_s")}
+        meeting = {**old_meeting, **{k: detail[k] for k in ("id", "topic", "start", "timezone", "duration_s")}}
+        repo = enclosing_git_repo(folder)
+        if repo is not None:
+            warnings = [*warnings, f"the meeting folder is inside a git repository ({repo.name}); recordings and "
+                                   "transcripts should stay out of version control"]
         head = {"meeting": meeting, "folder": str(folder)}
         if missing:
             head["missing_types"] = missing
@@ -230,6 +251,7 @@ def cmd_download(args: argparse.Namespace) -> dict[str, Any]:
                         link = None  # noqa: F841 - drop the reference as soon as possible
                     check = verify.check_file(dest, f["type"], f["duration_ms"])
                     entries[f["file_id"]] = {
+                        **(entries.get(f["file_id"]) or {}),
                         "clip": clip_index, "type": f["type"], "name": f["name"], "local_name": f["local_name"],
                         "bytes": res["bytes"], "duration_ms": f["duration_ms"], "sha256": res["sha256"],
                         "md5": res["md5"], "etag_md5_match": res["etag_md5_match"], "check": check,
@@ -242,7 +264,9 @@ def cmd_download(args: argparse.Namespace) -> dict[str, Any]:
             links = mapping = None  # noqa: F841
         if entries:
             manifest.save(folder, {**man, "meeting": meeting, "files": entries})
-        ok = all(i["state"] in ("done", "downloaded") for i in items if i["state"] != "not_ready")
+        ok = all(i["state"] in ("done", "downloaded") for i in items)
+        if any(i["state"] == "not_ready" for i in items):
+            head["not_ready"] = "some requested files are still processing in Zoom; rerun later"
         return {"ok": ok, "dry_run": False, **head, "files": [_item_out(i) for i in items],
                 "manifest": str(folder / manifest.MANIFEST), **_extras(blocked, warnings)}
 
@@ -258,7 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--home", help="the tool's home directory (env ZOOM_REC_HOME; default ~/.zoom-recording)")
 
     ap = _Parser(prog="zoom-rec", description=__doc__.splitlines()[0])
-    ap.add_argument("--version", action="version", version=__version__)
+    ap.add_argument("--version", action=_VersionAction, nargs=0, help="print the version as JSON")
     sub = ap.add_subparsers(dest="command", parser_class=_Parser)
     sub.required = True
 
@@ -312,6 +336,9 @@ def main(argv: list[str] | None = None) -> int:
         result = {"ok": False, "error": "guard_refused", "message": scrub(e)}
     except (zoomweb.PageError, parse.PayloadError) as e:
         result = {"ok": False, "error": "page", "message": scrub(e)}
+    except KeyboardInterrupt:
+        result = {"ok": False, "error": "interrupted",
+                  "message": "stopped; rerun the same command to resume (partial files are kept)"}
     except Exception as e:  # noqa: BLE001 - one JSON object, always
         result = {"ok": False, "error": "unexpected", "type": type(e).__name__, "message": scrub(e)[:500]}
     emit(result)

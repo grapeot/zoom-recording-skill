@@ -9,6 +9,7 @@
 - Offline suite: parsing, list-form rewrite, guards, own-browser check, ranged download (resume, ignored range, retries, size and hash mismatch), manifest, checks, CLI JSON contract, source scan.
 - Clip Download button is found by its visible text and position, not a fixed label: some single-clip meetings label it "Download Recording" without a number.
 - Meeting duration falls back to minutes, then to clip lengths, for older meetings without a millisecond duration.
+- Independent review fixes: guard on the whole browser context; unknown batch-response shapes aborted instead of passed to the page; a 200 answer mid-file keeps the partial file; unknown sizes and 416 at end of file; failed content checks are not treated as done; `ok` false when requested files are still processing; unknown `--clip` is a usage error; `--version` and Ctrl-C print JSON; manifest merges keep user keys under `meeting` and file entries; warning when the meeting folder is inside a git repository; list de-duplicates and stops when a page adds nothing; identity-provider redirects count as signed out; clip-button count polled before refusing.
 - Manual end-to-end against a real account: listed 46 recordings back to 2024 across 4 pages, downloaded 5 meetings (5 files each: video, audio, transcript, chat, captions), all sizes equal to Zoom's listing, all md5 equal to the server ETag, video durations within 0.1 s of Zoom's. One download was killed at 16 MB and resumed from there on the next run; a third run skipped every file.
 
 ## Lessons Learned

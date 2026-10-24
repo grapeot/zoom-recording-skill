@@ -65,8 +65,11 @@ def origin_of(page: Any) -> str:
 
 
 def _signed_out(page: Any) -> bool:
-    path = urlsplit(page.url or "").path.lower()
-    return any(h in path for h in SIGNIN_HINTS)
+    parts = urlsplit(page.url or "")
+    host = (parts.hostname or "").lower()
+    if parts.scheme.startswith("http") and not (host == "zoom.us" or host.endswith(".zoom.us")):
+        return True  # sent to an identity provider
+    return any(h in parts.path.lower() for h in SIGNIN_HINTS)
 
 
 def load_list(page: Any, overrides: dict[str, str], timeout_ms: int = 45000) -> dict[str, Any]:
@@ -134,12 +137,11 @@ def capture_links(page: Any, clip_position: int, clip_count: int, timeout_ms: in
             resp = route.fetch()
             body = resp.json()
             captured["body"] = body
-            emptied = dict(body) if isinstance(body, dict) else body
-            if isinstance(emptied, dict) and isinstance(emptied.get("result"), dict):
-                res = dict(emptied["result"])
-                res["batchDownloadFileList"] = []
-                emptied["result"] = res
-            route.fulfill(response=resp, json=emptied)
+            result = body.get("result") if isinstance(body, dict) else None
+            if not (isinstance(result, dict) and isinstance(result.get("batchDownloadFileList"), list)):
+                route.abort()  # unknown shape: never hand links to the page
+                return
+            route.fulfill(response=resp, json={**body, "result": {**result, "batchDownloadFileList": []}})
         except Exception as e:  # noqa: BLE001 - never let the page download on a failure
             captured["error"] = type(e).__name__
             route.abort()
@@ -149,7 +151,10 @@ def capture_links(page: Any, clip_position: int, clip_count: int, timeout_ms: in
         page.bring_to_front()
         buttons = page.locator('button[aria-label^="Download "]:visible').filter(
             has_text=re.compile(r"^\s*Download\s*$"))
-        buttons.first.wait_for(state="visible", timeout=timeout_ms)
+        waited = 0
+        while buttons.count() != clip_count and waited < timeout_ms:
+            page.wait_for_timeout(250)
+            waited += 250
         if buttons.count() != clip_count:
             raise PageError(f"expected {clip_count} clip Download button(s) on the detail page, "
                             f"found {buttons.count()}; nothing was clicked")

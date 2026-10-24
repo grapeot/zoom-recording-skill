@@ -102,6 +102,7 @@ def test_list_pages_until_total(capsys, monkeypatch, fake_attached, list_body):
         body["result"]["total_records"] = 3
         if overrides["p"] == "2":
             body["result"]["recordings"] = body["result"]["recordings"][:1]
+            body["result"]["recordings"][0]["meetingId"] = "TESTMEETINGCCCCCCCCCCC=="
         return body
 
     monkeypatch.setattr(cli.zoomweb, "load_list", load_list)
@@ -180,3 +181,194 @@ def test_download_refuses_folder_of_another_meeting(capsys, monkeypatch, fake_at
     monkeypatch.setattr(cli.zoomweb, "load_detail", lambda page, mid, timeout_ms=0: detail_body)
     code, obj = run(capsys, ["download", "TESTMEETINGAAAAAAAAAAA==", "--out", str(tmp_path)])
     assert obj["error"] == "folder_in_use"
+
+
+def test_version_is_json(capsys):
+    with pytest.raises(SystemExit) as e:
+        cli.main(["--version"])
+    assert e.value.code == 0
+    assert json.loads(capsys.readouterr().out)["version"]
+
+
+def test_unexpected_errors_are_scrubbed(capsys, monkeypatch, fake_attached):
+    def boom(page, mid, timeout_ms=0):
+        raise RuntimeError("failed " + signed_link("x.mp4"))
+    monkeypatch.setattr(cli.zoomweb, "load_detail", boom)
+    code, obj = run(capsys, ["show", "X"])
+    assert obj["error"] == "unexpected" and "Signature" not in obj["message"]
+
+
+def _execute_setup(monkeypatch, detail_body, contents, reject_first=False):
+    monkeypatch.setattr(cli.zoomweb, "load_detail", lambda page, mid, timeout_ms=0: detail_body)
+    clicks, gets = [], {"n": 0}
+
+    def capture_links(page, clip_position, clip_count, **kw):
+        clicks.append((clip_position, clip_count))
+        return [signed_link(n) for n in contents]
+
+    def browser_getter(request_context, link, referer, timeout_ms=0):
+        data = contents[link.split("?")[0].rsplit("/", 1)[-1]]
+
+        def get(start, end):
+            gets["n"] += 1
+            if reject_first and gets["n"] == 1:
+                return 403, {}, b""
+            chunk = data[start:end + 1]
+            return 206, {"content-range": f"bytes {start}-{start + len(chunk) - 1}/{len(data)}"}, chunk
+        return get
+
+    monkeypatch.setattr(cli.zoomweb, "capture_links", capture_links)
+    monkeypatch.setattr(cli.fetch, "browser_getter", browser_getter)
+    return clicks
+
+
+def test_expired_link_gets_fresh_links_once(capsys, monkeypatch, fake_attached, detail_body, tmp_path):
+    clicks = _execute_setup(monkeypatch, detail_body, {"GMT_TEST_1_chat.txt": b"y" * 50}, reject_first=True)
+    code, obj = run(capsys, ["download", "M", "--files", "chat", "--out", str(tmp_path), "--execute"])
+    assert code == 0 and obj["files"][0]["state"] == "downloaded"
+    assert clicks == [(1, 2), (1, 2)]
+
+
+def test_second_clip_uses_its_position_and_files(capsys, monkeypatch, fake_attached, detail_body, tmp_path):
+    clicks = _execute_setup(monkeypatch, detail_body, {"GMT_TEST_2_video.mp4": b"v" * 2000})
+    monkeypatch.setattr(cli.verify, "check_file", lambda *a: {"ok": True})
+    code, obj = run(capsys, ["download", "M", "--clip", "2", "--files", "video", "--out", str(tmp_path),
+                             "--execute"])
+    assert code == 0 and clicks == [(2, 2)]
+    assert [f["local_name"] for f in obj["files"]] == ["r2_shared_screen_with_speaker_view.mp4"]
+
+
+def test_unknown_clip_is_a_usage_error(capsys, monkeypatch, fake_attached, detail_body, tmp_path):
+    monkeypatch.setattr(cli.zoomweb, "load_detail", lambda page, mid, timeout_ms=0: detail_body)
+    code, obj = run(capsys, ["download", "M", "--clip", "9", "--out", str(tmp_path)])
+    assert obj["error"] == "usage"
+
+
+def test_not_ready_files_make_ok_false(capsys, monkeypatch, fake_attached, detail_body, tmp_path):
+    clicks = _execute_setup(monkeypatch, detail_body, {})
+    code, obj = run(capsys, ["download", "M", "--clip", "2", "--files", "poll", "--out", str(tmp_path),
+                             "--execute"])
+    assert obj["ok"] is False and obj["files"][0]["state"] == "not_ready" and clicks == []
+
+
+def test_user_keys_in_manifest_survive(capsys, monkeypatch, fake_attached, detail_body, tmp_path):
+    (tmp_path / "manifest.json").write_text(json.dumps(
+        {"meeting": {"id": "TESTMEETINGAAAAAAAAAAA==", "note": "keep"}, "publish": {"where": "x"},
+         "files": {"file-chat-1": {"mine": 1}}}))
+    _execute_setup(monkeypatch, detail_body, {"GMT_TEST_1_chat.txt": b"y" * 50})
+    run(capsys, ["download", "M", "--files", "chat", "--out", str(tmp_path), "--execute"])
+    man = json.loads((tmp_path / "manifest.json").read_text())
+    assert man["meeting"]["note"] == "keep" and man["publish"] == {"where": "x"}
+    assert man["files"]["file-chat-1"]["mine"] == 1 and man["files"]["file-chat-1"]["sha256"]
+
+
+# ------------------------------------------------------------------ capture_links with fakes
+
+class _Btn:
+    def __init__(self, label, text):
+        self.label, self.text, self.clicked = label, text, False
+
+    def count(self):
+        return 1
+
+    def get_attribute(self, name):
+        return self.label
+
+    def inner_text(self):
+        return self.text
+
+    def click(self, timeout=None):
+        self.clicked = True
+        self.on_click()
+
+
+class _Buttons:
+    def __init__(self, items):
+        self.items = items
+
+    def filter(self, has_text=None):
+        return _Buttons([b for b in self.items if has_text.fullmatch(b.text) or has_text.search(b.text)])
+
+    def count(self):
+        return len(self.items)
+
+    def nth(self, i):
+        return self.items[i]
+
+
+class _Route:
+    def __init__(self, body):
+        self.body, self.fulfilled, self.aborted = body, None, False
+
+    def fetch(self):
+        body = self.body
+
+        class R:
+            def json(self_inner):
+                return body
+        return R()
+
+    def fulfill(self, response=None, json=None):
+        self.fulfilled = json
+
+    def abort(self):
+        self.aborted = True
+
+
+class _Page:
+    def __init__(self, buttons, body):
+        self.buttons, self.body, self.handler, self.route_obj = buttons, body, None, None
+        for b in buttons:
+            b.on_click = self._fire
+
+    def _fire(self):
+        self.route_obj = _Route(self.body)
+        self.handler(self.route_obj)
+
+    def route(self, pattern, handler):
+        self.handler = handler
+
+    def unroute(self, pattern, handler):
+        self.handler = None
+
+    def bring_to_front(self):
+        pass
+
+    def locator(self, selector):
+        if selector.startswith("button["):
+            return _Buttons(self.buttons)
+        return _Buttons([])  # no confirmation dialog
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+def test_capture_links_empties_the_list_given_to_the_page():
+    body = {"status": True, "result": {"batchDownloadFileList": [signed_link("a.mp4")], "other": 1}}
+    page = _Page([_Btn("Download Recording 1", "Download")], body)
+    links = zoomweb.capture_links(page, 1, 1)
+    assert links == [signed_link("a.mp4")]
+    assert page.route_obj.fulfilled["result"] == {"batchDownloadFileList": [], "other": 1}
+    assert page.handler is None
+
+
+def test_capture_links_aborts_unknown_shapes():
+    page = _Page([_Btn("Download Recording 1", "Download")], {"status": True, "result": {"files": []}})
+    with pytest.raises(Exception):
+        zoomweb.capture_links(page, 1, 1)
+    assert page.route_obj.aborted and page.route_obj.fulfilled is None
+
+
+def test_capture_links_refuses_when_button_count_differs():
+    page = _Page([_Btn("Download Recording 1", "Download")], {})
+    with pytest.raises(zoomweb.PageError, match="nothing was clicked"):
+        zoomweb.capture_links(page, 1, 2, timeout_ms=500)
+    assert not page.buttons[0].clicked
+
+
+def test_capture_links_picks_the_clip_by_position():
+    b1, b2 = _Btn("Download Recording 1", "Download"), _Btn("Download Recording 2", "Download")
+    body = {"status": True, "result": {"batchDownloadFileList": []}}
+    page = _Page([b1, b2], body)
+    zoomweb.capture_links(page, 2, 2)
+    assert b2.clicked and not b1.clicked

@@ -47,7 +47,8 @@ Every command prints exactly one JSON object on stdout; progress goes to stderr.
 - Find the meeting with `list` over a range wide enough to contain it, filtered by `--query` when the topic is known. Match on topic and date together. If several recordings fit (a series reuses titles such as "Office Hour"), or none does, report the candidates with start time and duration and stop.
 - Run `show` before downloading when you need to know which files exist; a meeting can have several clips ("Recording 1", "Recording 2") and several video layouts.
 - Run `download` without `--execute` first, read the plan, then run it with `--execute`. Re-running is safe: finished files are skipped, partial files resume from their `.part`.
-- Report the folder, each file's size and check result, and `missing_types` when a requested type does not exist for that meeting (for example no chat).
+- Report the folder, each file's size and check result, and `missing_types` when a requested type does not exist for that meeting (for example no chat). `ok` is true only when every requested file is `downloaded` or `done`; files Zoom is still processing show as `not_ready`.
+- Keep the meeting folder out of any git repository; the output carries a warning when it is inside one.
 
 ## Output folder
 
@@ -74,7 +75,9 @@ Keys you add to `manifest.json` yourself (for example where the recording will b
 | `page` | A Zoom web response did not load or did not parse; the message names the endpoint. | Retry once; if it persists the web app changed, report the endpoint name. |
 | `guard_refused` | The click guard refused an element. | Report it; the page layout probably changed. Never click it another way. |
 | `link_rejected` (per file) | Zoom refused or expired a download link. | Rerun; the tool fetches fresh links and resumes. |
-| `size_mismatch`, `hash_mismatch` (per file) | The bytes do not match Zoom's listing or the server's checksum. | Rerun; a corrupt file is moved aside as `.bad`. |
+| `size_mismatch`, `hash_mismatch`, `http_status` (per file) | The bytes do not match Zoom's listing or the server's checksum, or the server answered unexpectedly. | Rerun; partial files are kept and resumed, a file that fails the checksum is moved aside as `.bad`. |
+| `interrupted` | The command was stopped. | Rerun the same command; it resumes. |
+| `folder_in_use` | The output folder's manifest belongs to another meeting. | Choose another `--out`. |
 
 `blocked_requests` in any output lists requests the guard aborted. It should be empty; if it is not, report it.
 

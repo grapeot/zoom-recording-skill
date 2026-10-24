@@ -80,6 +80,8 @@ def download(
     dest.parent.mkdir(parents=True, exist_ok=True)
     if part.exists() and expected_bytes is not None and part.stat().st_size > expected_bytes:
         part.unlink()
+    if expected_bytes == 0:
+        part.write_bytes(b"")
     resumed_from = part.stat().st_size if part.exists() else 0
     total = expected_bytes
     etag: str | None = None
@@ -102,8 +104,13 @@ def download(
             raise FetchError("network", f"network error after {retries} retries: {e}") from None
         if status in (401, 403):
             raise FetchError("link_rejected", f"HTTP {status}: the download link was refused or expired")
-        if status == 416 and total is not None and offset == total:
-            break
+        if status == 416:
+            m = re.match(r"bytes \*/(\d+)", headers.get("content-range") or "")
+            server_total = int(m.group(1)) if m else total
+            if server_total is not None and offset == server_total and (expected_bytes in (None, server_total)):
+                total = server_total
+                break
+            raise FetchError("bad_range", "the server refused the requested byte range")
         if status >= 500 or status == 429:
             if attempt < retries:
                 attempt += 1
@@ -125,13 +132,16 @@ def download(
                 raise FetchError("empty_range", "the server returned an empty range")
             with open(part, "ab") as fh:
                 fh.write(body)
+            if total is None and len(body) < end - offset + 1:
+                total = offset + len(body)  # size unknown (`/*`): a short range is the end of the file
         elif status == 200:
-            # Range ignored: the whole file came back. Accept it only when starting from zero.
-            if offset != 0:
-                part.unlink()
-                continue
+            # Range ignored and the whole file came back. Keep partial progress unless the body is
+            # really the complete file (an expired link can answer 200 with an error page).
             if expected_bytes is not None and len(body) != expected_bytes:
-                raise FetchError("size_mismatch", f"server sent {len(body)} bytes, Zoom listed {expected_bytes}")
+                raise FetchError("http_status", f"HTTP 200 with {len(body)} bytes instead of the requested "
+                                                f"range (Zoom listed {expected_bytes}); partial file kept")
+            if expected_bytes is None and offset != 0:
+                raise FetchError("http_status", "HTTP 200 instead of the requested range; partial file kept")
             with open(part, "wb") as fh:
                 fh.write(body)
             total = len(body)

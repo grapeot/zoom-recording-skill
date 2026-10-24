@@ -159,3 +159,39 @@ def test_browser_getter_errors_carry_only_the_type():
     with pytest.raises(ConnectionError) as e:
         get(0, 1)
     assert "SECRET" not in str(e.value)
+
+
+def test_200_with_wrong_body_keeps_partial(tmp_path):
+    (tmp_path / "f.part").write_bytes(DATA[:500])
+
+    def page_instead(start, end):
+        return 200, {}, b"<html>expired</html>"
+    with pytest.raises(fetch.FetchError) as e:
+        fetch.download(page_instead, tmp_path / "f", len(DATA), backoff=0)
+    assert e.value.code == "http_status"
+    assert (tmp_path / "f.part").read_bytes() == DATA[:500]
+
+
+def test_unknown_total_with_star_range(tmp_path):
+    def star(start, end):
+        chunk = DATA[start:end + 1]
+        if not chunk:
+            return 416, {"content-range": "bytes */*"}, b""
+        return 206, {"content-range": f"bytes {start}-{start + len(chunk) - 1}/*"}, chunk
+    res = fetch.download(star, tmp_path / "f", None, chunk=30000, backoff=0)
+    assert res["bytes"] == len(DATA)
+
+
+def test_416_at_end_with_known_size(tmp_path):
+    def exact(start, end):
+        if start >= len(DATA):
+            return 416, {"content-range": f"bytes */{len(DATA)}"}, b""
+        chunk = DATA[start:end + 1]
+        return 206, {"content-range": f"bytes {start}-{start + len(chunk) - 1}/*"}, chunk
+    res = fetch.download(exact, tmp_path / "f", None, chunk=len(DATA) // 4, backoff=0)
+    assert res["bytes"] == len(DATA)
+
+
+def test_zero_byte_file(tmp_path):
+    res = fetch.download(lambda s, e: pytest.fail("no request needed"), tmp_path / "f", 0, backoff=0)
+    assert res["bytes"] == 0 and (tmp_path / "f").exists()

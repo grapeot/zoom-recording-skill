@@ -83,3 +83,11 @@ def test_check_file_duration_tolerance(tmp_path, monkeypatch):
     probe["streams"] = [{"codec_type": "audio"}]
     assert verify.check_file(p, "video", 100_000)["ok"] is False
     assert verify.check_file(p.with_suffix(".m4a"), "audio", 100_000)["ok"] is True
+
+
+def test_failed_check_is_not_done(tmp_path):
+    (tmp_path / "a.vtt").write_text("abc")
+    entry = {"local_name": "a.vtt", "bytes": 3, "sha256": "h", "check": {"ok": False}}
+    assert not manifest.completed(entry, tmp_path)
+    entry["check"] = {"ok": None}
+    assert manifest.completed(entry, tmp_path)
