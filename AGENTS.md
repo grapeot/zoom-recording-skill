@@ -13,12 +13,12 @@ uv pip install -e '.[dev]'
 python -m pytest -q
 ```
 
-Tests are fully offline. They never contact Zoom and never start a browser. Downloads are exercised against a loopback HTTP server inside the test process.
+Tests are fully offline. They never contact Zoom and never start a browser. Downloads are exercised against an in-memory ranged-GET fake; page driving against fake page, locator and route objects.
 
 ## Repository invariants
 
 1. **Default branch is `master`.** Every change goes through a feature branch and a PR into `master`.
-2. **Read-only toward Zoom.** The tool lists, inspects and downloads. It never deletes, trashes, renames, moves, shares, changes passcodes, sharing or settings, and never uploads. While attached, `guard.install_request_guard` aborts any request whose path looks like a mutation; keep every page the tool drives behind it.
+2. **Read-only toward Zoom.** The tool lists, inspects and downloads. It never deletes, trashes, renames, moves, shares, changes passcodes, sharing or settings, and never uploads. While attached, `guard.install_request_guard` (installed on the browser context) aborts any API or document request whose path looks like a mutation; keep it installed for every command that attaches.
 3. **Every click goes through `guard.safe_click`.** It only clicks an element whose accessible label matches an allowlisted pattern and refuses anything whose label or text mentions delete, trash, share, link, copy, move, rename, edit, passcode, setting or upload. Do not add `.click(`, `dispatch_event`, `keyboard.press` or `el.click()` in `page.evaluate` anywhere else; `tests/test_source_scan.py` fails if you do.
 4. **Never automate sign-in, never touch credentials.** No code reads, prints, exports or injects cookies, storage state, authorization headers or CSRF tokens. The human signs in in the visible window. Requests the page makes keep their own headers; the tool only rewrites the form fields of the recording-list request and reads JSON responses.
 5. **Signed download URLs are secrets.** They stay in memory for the length of one download. Never print, log, store in a manifest, or put them in an error message; route every error string through `redact.scrub`.

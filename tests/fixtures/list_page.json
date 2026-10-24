@@ -1,0 +1,43 @@
+{
+ "status": true,
+ "errorCode": 0,
+ "errorMessage": null,
+ "result": {
+  "page_size": 15,
+  "page": 1,
+  "total_records": 2,
+  "search": "",
+  "recordings": [
+   {
+    "hostEmail": "alice@example.com",
+    "accountId": "ACCOUNT_TEST",
+    "hostId": "HOST_TEST",
+    "meetingId": "TESTMEETINGAAAAAAAAAAA==",
+    "encryptMeetId": "ENCRYPTED_TEST_ID",
+    "meetingNumber": 11122233344,
+    "topic": "Example Workshop: Week 1",
+    "meetingStartTime": 1717270623000,
+    "meetingTimezone": "America/Los_Angeles",
+    "meetingDuration": 29,
+    "meetingDurationInMs": 1740000,
+    "recordingCount": 5,
+    "totalSize": 1000,
+    "attendeeInfos": [
+     {
+      "name": "Bob Example",
+      "picUrl": ""
+     }
+    ]
+   },
+   {
+    "meetingId": "TESTMEETINGBBBBBBBBBBB==",
+    "topic": "Office hour",
+    "meetingStartTime": 1717184223000,
+    "meetingTimezone": "Not/AZone",
+    "meetingDuration": 60,
+    "recordingCount": 2,
+    "totalSize": 500
+   }
+  ]
+ }
+}

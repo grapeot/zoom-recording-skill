@@ -14,10 +14,11 @@ All automated tests are offline: `python -m pytest -q`. They never contact Zoom,
 - Source scan: no click, key press, event dispatch, cookie or storage-state calls outside `guard.py`; no reads of request headers.
 - CLI contract: every command, including usage errors and failures, prints exactly one JSON object.
 
-## Integration tests (loopback HTTP server)
+## Integration tests (fakes, no network)
 
-- Ranged download from scratch, resume from a partial `.part` file, server that ignores `Range`, size mismatch, ETag md5 match and mismatch, retries after a dropped connection.
-- Manifest written after a download and re-used: complete files are skipped on the next run.
+- Ranged download against an in-memory fake: from scratch, resume from a partial `.part` file, server that ignores `Range`, a 200 error page mid-file (partial file kept), unknown total size, 416 at the end, size mismatch, ETag md5 match and mismatch, retries after a dropped connection, zero-byte files.
+- `capture_links` against fake page, locator and route objects: the page receives an empty link list, unknown response shapes are aborted, a button-count mismatch clicks nothing, the clip is chosen by position.
+- `download --execute` with fake page driving: manifest written, completed files skipped next time, a refused link answered by fresh links once, second clip, unknown clip, files still processing, user keys in the manifest kept.
 
 ## Manual end-to-end
 
