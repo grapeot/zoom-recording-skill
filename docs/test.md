@@ -23,6 +23,7 @@ All automated tests are offline: `python -m pytest -q`. They never contact Zoom,
 - `download --execute` with fake page driving: manifest written, completed files skipped next time, a refused link answered by fresh links once, second clip, unknown clip, files still processing, user keys in the manifest kept.
 - `settings` with fake page driving: preview and already-off no-op do not uncheck or save; explicit removal permits one Save, disarms on failure, and checks fresh passcode/access/checkbox state. A changed share token is accepted; unchanged passcode or drift in other settings is not reported as success. Locked passcodes and wrong IDs fail before clicking.
 - Conditional readback: supported invitee-bypass labels may disappear only when the passcode clears and the boolean server bypass flag remains unchanged. Losing unrelated controls, unknown child labels, missing flags or changed permissions fails verification. Supported label variants currently have synthetic coverage and await live confirmation.
+- Save timing: the fake server returns a successful response before its panel update settles. Readback must wait for Save hidden, then More settings visible. A timeout at either gate stops before readback and leaves the write permit disarmed.
 
 ## Manual end-to-end
 
@@ -32,4 +33,6 @@ Run against a signed-in browser: `status`, `list` over a date range, `show` on o
 
 The offline suite passes on Python 3.10 and 3.12 in CI, and the manual run produced files whose sizes match Zoom's, whose video duration matches within two seconds, and whose transcript parses.
 
-Live sharing verification exercised inspection, preview and `--disable-passcode --execute` on an already-disabled recording. It returned `executed: false`, `readback_verified: true`, and a canonical share URL; no live write was needed. Enabled-to-disabled mutation is covered by offline tests and public client-code inspection, not a live save. Do not claim otherwise or enable a passcode merely to test removal.
+Initial CLI verification exercised inspection, preview and `--disable-passcode --execute` on an already-disabled recording, returning `executed: false` and `readback_verified: true`.
+
+A subsequent targeted live run used a private direct browser script to remove a passcode. Waiting for Save hidden and More settings visible avoided stale readback; the independent checkboxes stayed unchanged. A fresh cookie-free context opened the copied, password-free share URL and showed the expected title/date, one video element and no password input. This verifies the browser workflow and page access, not full media playback or an end-to-end live run of the updated CLI. The implementation agent added the matching CLI wait gates and tested them offline.

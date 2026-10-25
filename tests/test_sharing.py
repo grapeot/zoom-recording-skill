@@ -170,7 +170,8 @@ def state(enabled=True):
 def setup_ui(monkeypatch, before, after=None, save_success=True):
     calls = []
     checkbox = SimpleNamespace(is_checked=lambda: False)
-    dialog = SimpleNamespace(get_by_role=lambda *a, **k: checkbox)
+    save_button = SimpleNamespace(wait_for=lambda **k: calls.append("save_hidden"))
+    dialog = SimpleNamespace(get_by_role=lambda role, **k: checkbox if role == "checkbox" else save_button)
     values = iter([before, after] if after else [before])
     monkeypatch.setattr(sharing, "inspect", lambda *a: (copy.deepcopy(next(values)), dialog))
     monkeypatch.setattr(guard, "disable_passcode", lambda *a: calls.append("disable"))
@@ -184,7 +185,9 @@ def setup_ui(monkeypatch, before, after=None, save_success=True):
     @contextmanager
     def expect(*a, **k):
         yield SimpleNamespace(value=SimpleNamespace(status=200, json=lambda: {"status": save_success}))
-    page = SimpleNamespace(expect_response=expect, url=ORIGIN + "/recording/detail")
+    more = SimpleNamespace(wait_for=lambda **k: calls.append("more_visible"))
+    page = SimpleNamespace(expect_response=expect, url=ORIGIN + "/recording/detail", get_by_role=lambda *a, **k: more)
+    page.save_button = save_button
     return page, p, calls
 
 
@@ -208,7 +211,7 @@ def test_write_and_readback_accept_new_share_url(monkeypatch):
     page, p, calls = setup_ui(monkeypatch, state(), after)
     result = sharing.settings(page, MID, disable=True, execute=True, permit=p)
     assert result["ok"] and result["executed"] and result["readback_verified"]
-    assert calls == ["disable", "save"] and not p.armed
+    assert calls == ["disable", "save", "save_hidden", "more_visible"] and not p.armed
 
 
 @pytest.mark.parametrize("changed", ["passcode", "access", "checkbox", "public_link_access"])
@@ -268,6 +271,24 @@ def test_failed_save_disarms_permit(monkeypatch):
     assert not p.armed
 
 
+@pytest.mark.parametrize("gate", ["save_hidden", "more_visible"])
+def test_unsettled_save_ui_stops_before_readback(monkeypatch, gate):
+    page, p, calls = setup_ui(monkeypatch, state())
+    def timeout(**kwargs):
+        assert not p.armed
+        raise TimeoutError()
+    def get(role, **kwargs):
+        return SimpleNamespace(wait_for=timeout)
+    if gate == "save_hidden":
+        page.save_button.wait_for = timeout
+    else:
+        page.get_by_role = get
+    with pytest.raises(zoomweb.PageError, match="save UI did not settle"):
+        sharing.settings(page, MID, disable=True, execute=True, permit=p)
+    assert p.consumed and not p.armed
+    assert calls == ["disable", "save"] + (["save_hidden"] if gate == "more_visible" else [])
+
+
 def test_locked_passcode_and_wrong_recording_fail_before_click(monkeypatch):
     before = state()
     before["settings"]["passcode_locked"] = True
@@ -315,8 +336,12 @@ class SharingPage:
         self.share_id = MID
         self.permit = None
         self.waiter = None
+        self.save_sent = False
+        self.ui_settled = False
+        self.waits = []
 
     def load_detail(self, page, meeting_id):
+        assert not self.save_sent or self.ui_settled, "readback raced the pending save UI update"
         self.url = "https://us06web.zoom.us/recording/detail"
         self.ui_enabled = self.server_enabled
         return self.detail
@@ -378,7 +403,13 @@ class SharingControl:
         return self.name
 
     def wait_for(self, **kwargs):
-        pass
+        self.page.waits.append((self.name, kwargs["state"]))
+        if self.name == "Save" and kwargs["state"] == "hidden":
+            assert self.page.save_sent
+            self.page.server_enabled = self.page.ui_enabled
+            self.page.ui_settled = True
+        elif self.name == "More settings" and self.page.save_sent:
+            assert self.page.ui_settled
 
     def locator(self, selector):
         assert selector == ".." and self.name == "Passcode"
@@ -397,7 +428,7 @@ class SharingControl:
             p = self.page.permit
             assert p.accept("https://us06web.zoom.us" + guard.SAVE_SETTINGS_PATH, "POST", "xhr",
                             f"meetingId={MID}&enablePasscode=false")
-            self.page.server_enabled = self.page.ui_enabled
+            self.page.save_sent = True
             self.page.respond(save=True)
 
 
@@ -410,6 +441,8 @@ def test_real_inspect_and_guard_chain_after_regional_redirect(monkeypatch, detai
     assert result["ok"] and result["executed"] and result["readback_verified"]
     assert p.origin == "https://us06web.zoom.us" and not p.armed
     assert page.actions == ["Share", "More settings", "uncheck", "Save", "Share", "More settings"]
+    hidden = page.waits.index(("Save", "hidden"))
+    assert page.waits[hidden + 1] == ("More settings", "visible")
 
 
 @pytest.mark.parametrize("failure", ["detail_id", "share_id", "empty_controls", "empty_label", "duplicate_label"])

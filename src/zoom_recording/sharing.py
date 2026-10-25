@@ -117,11 +117,12 @@ def settings(page: Any, meeting_id: str, *, disable: bool, execute: bool,
     guard.disable_passcode(checkbox)
     if checkbox.is_checked():
         raise guard.GuardError("Passcode checkbox did not clear")
+    save_button = dialog.get_by_role("button", name="Save", exact=True)
     permit.armed = True
     try:
         with page.expect_response(lambda r: r.url == permit.origin + guard.SAVE_SETTINGS_PATH
                                   and r.request.method == "POST", timeout=30000) as info:
-            _click(dialog.get_by_role("button", name="Save", exact=True), "save")
+            _click(save_button, "save")
         resp = info.value
         body = resp.json()
         if resp.status != 200 or not isinstance(body, dict) or body.get("status") is not True:
@@ -134,6 +135,13 @@ def settings(page: Any, meeting_id: str, *, disable: bool, execute: bool,
         raise zoomweb.PageError(f"save outcome uncertain ({type(e).__name__}); inspect settings before retrying") from None
     finally:
         permit.armed = False
+    # The response can precede the panel's asynchronous state update. Wait for the
+    # current settings view to close before navigation/readback can race its refresh.
+    try:
+        save_button.wait_for(state="hidden", timeout=30000)
+        page.get_by_role("button", name="More settings", exact=True).wait_for(state="visible", timeout=30000)
+    except Exception as e:
+        raise zoomweb.PageError(f"save UI did not settle ({type(e).__name__}); inspect settings before retrying") from None
     after, _ = inspect(page, meeting_id)
     verified = (not after["settings"]["passcode_enabled"] and unchanged_controls(state, after["settings"])
                 and state["access"] == after["settings"]["access"]
