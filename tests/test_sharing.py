@@ -80,9 +80,17 @@ def test_explicit_sharing_click_never_allows_other_controls(label, text):
 ])
 def test_checkbox_guard_only_unchecks_passcode(label, visible, enabled, kind, allowed):
     changes = []
+    checked = [True]
+    def click(**kwargs):
+        changes.append(False)
+        checked[0] = False
+    wrapper = SimpleNamespace(count=lambda: 1, evaluate=lambda script: "SPAN",
+                              get_attribute=lambda n: "recording-share-panel-checkbox__wrap is-checked",
+                              locator=lambda s: SimpleNamespace(count=lambda: 1), inner_text=lambda: label,
+                              click=click)
     locator = SimpleNamespace(count=lambda: 1, is_visible=lambda: visible, is_enabled=lambda: enabled,
                               get_attribute=lambda n: kind, evaluate=lambda s: label,
-                              set_checked=lambda checked: changes.append(checked))
+                              is_checked=lambda: checked[0], locator=lambda s: wrapper)
     if allowed:
         guard.disable_passcode(locator)
         assert changes == [False]
@@ -90,6 +98,34 @@ def test_checkbox_guard_only_unchecks_passcode(label, visible, enabled, kind, al
         with pytest.raises(guard.GuardError):
             guard.disable_passcode(locator)
         assert changes == []
+
+
+@pytest.mark.parametrize("bad_part", ["tag", "class", "count", "label", "still_checked"])
+def test_checkbox_wrapper_fails_closed(bad_part):
+    clicks = []
+    checked = [True]
+    def click(**kwargs):
+        clicks.append("wrapper")
+        if bad_part != "still_checked":
+            checked[0] = False
+    wrapper = SimpleNamespace(count=lambda: 1,
+        evaluate=lambda s: "DIV" if bad_part == "tag" else "SPAN",
+        get_attribute=lambda n: "wrong-wrapper" if bad_part == "class" else "recording-share-panel-checkbox__wrap",
+        locator=lambda s: SimpleNamespace(count=lambda: 2 if bad_part == "count" else 1),
+        inner_text=lambda: "Viewers can download" if bad_part == "label" else "Passcode", click=click)
+    locator = SimpleNamespace(count=lambda: 1, is_visible=lambda: True, is_enabled=lambda: True,
+        get_attribute=lambda n: "checkbox", evaluate=lambda s: "Passcode",
+        is_checked=lambda: checked[0], locator=lambda s: wrapper)
+    with pytest.raises(guard.GuardError):
+        guard.disable_passcode(locator)
+    assert clicks == (["wrapper"] if bad_part == "still_checked" else [])
+
+
+def test_checkbox_already_off_never_clicks_wrapper():
+    locator = SimpleNamespace(count=lambda: 1, is_visible=lambda: True, is_enabled=lambda: True,
+        get_attribute=lambda n: "checkbox", evaluate=lambda s: "Passcode", is_checked=lambda: False)
+    # No wrapper accessor: reaching one would fail instead of toggling an already-off input.
+    guard.disable_passcode(locator)
 
 
 def test_guard_permit_does_not_open_other_endpoints_or_fields():
@@ -190,6 +226,39 @@ def test_readback_mismatch_is_not_success(monkeypatch, changed):
     result = sharing.settings(page, MID, disable=True, execute=True, permit=p)
     assert not result["ok"] and not result["readback_verified"] and result["executed"]
     assert result["error"] == "readback_mismatch" and not p.armed
+
+
+@pytest.mark.parametrize("label", sorted(sharing.PASSCODE_DEPENDENT_LABELS))
+def test_conditional_passcode_child_can_disappear_without_permission_change(monkeypatch, label):
+    before, after = state(), state(False)
+    before["settings"]["controls"].append({"label": label, "checked": True, "disabled": False})
+    for snapshot in (before, after):
+        snapshot["settings"]["access"]["allowInviteesBypassPasscode"] = True
+    page, p, _ = setup_ui(monkeypatch, before, after)
+    result = sharing.settings(page, MID, disable=True, execute=True, permit=p)
+    assert result["ok"] and result["readback_verified"]
+
+
+@pytest.mark.parametrize("failure", ["unknown_child", "changed_flag", "missing_flag", "non_boolean_flag", "lost_download"])
+def test_disappearing_control_is_not_blanket_exempt(monkeypatch, failure):
+    before, after = state(), state(False)
+    child = {"label": "Allow invitees to access this recording without a passcode", "checked": True, "disabled": False}
+    before["settings"]["controls"].append(child)
+    for snapshot in (before, after):
+        snapshot["settings"]["access"]["allowInviteesBypassPasscode"] = True
+    if failure == "unknown_child":
+        child["label"] = "Allow strangers to change settings"
+    elif failure == "changed_flag":
+        after["settings"]["access"]["allowInviteesBypassPasscode"] = False
+    elif failure == "missing_flag":
+        after["settings"]["access"].pop("allowInviteesBypassPasscode")
+    elif failure == "non_boolean_flag":
+        after["settings"]["access"]["allowInviteesBypassPasscode"] = 1
+    else:
+        after["settings"]["controls"] = after["settings"]["controls"][:1]
+    page, p, _ = setup_ui(monkeypatch, before, after)
+    result = sharing.settings(page, MID, disable=True, execute=True, permit=p)
+    assert not result["ok"] and result["error"] == "readback_mismatch"
 
 
 def test_failed_save_disarms_permit(monkeypatch):
@@ -311,10 +380,14 @@ class SharingControl:
     def wait_for(self, **kwargs):
         pass
 
-    def set_checked(self, value):
-        assert value is False and self.name == "Passcode"
-        self.page.actions.append("uncheck")
-        self.page.ui_enabled = value
+    def locator(self, selector):
+        assert selector == ".." and self.name == "Passcode"
+        def uncheck(**kwargs):
+            self.page.actions.append("uncheck")
+            self.page.ui_enabled = False
+        return SimpleNamespace(count=lambda: 1, evaluate=lambda s: "SPAN",
+            get_attribute=lambda n: "recording-share-panel-checkbox__wrap",
+            locator=lambda s: SimpleNamespace(count=lambda: 1), inner_text=lambda: "Passcode", click=uncheck)
 
     def click(self, **kwargs):
         self.page.actions.append(self.name)

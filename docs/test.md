@@ -11,6 +11,7 @@ All automated tests are offline: `python -m pytest -q`. They never contact Zoom,
 - Redaction: URLs lose their query strings; token-shaped strings are replaced; error strings from failed requests carry no signed link.
 - Guards: allowlisted labels pass; deny words in label or text refuse the click; mutation paths are aborted, reads continue.
 - Sharing guard: exact recording ID, endpoint, method, false value, and one-shot arming; reject extra/duplicate fields, enabling passcodes, unknown bodies, other origins and unrelated recording writes. Canonical share URL validation rejects non-Zoom origins and never embeds password/download fields.
+- Checkbox wrapper: validate the input and exact parent wrapper before clicking, verify it clears, and reject wrong tags/classes/labels, multiple checkbox children, or still-checked inputs. Native `set_checked` calls remain prohibited by the source scan.
 - Own-browser check: command lines with and without the declared port and profile.
 - Source scan: no click, key press, event dispatch, cookie or storage-state calls outside `guard.py`; no reads of request headers.
 - CLI contract: every command, including usage errors and failures, prints exactly one JSON object.
@@ -21,6 +22,7 @@ All automated tests are offline: `python -m pytest -q`. They never contact Zoom,
 - `capture_links` against fake page, locator and route objects: the page receives an empty link list, unknown response shapes are aborted, a button-count mismatch clicks nothing, the clip is chosen by position.
 - `download --execute` with fake page driving: manifest written, completed files skipped next time, a refused link answered by fresh links once, second clip, unknown clip, files still processing, user keys in the manifest kept.
 - `settings` with fake page driving: preview and already-off no-op do not uncheck or save; explicit removal permits one Save, disarms on failure, and checks fresh passcode/access/checkbox state. A changed share token is accepted; unchanged passcode or drift in other settings is not reported as success. Locked passcodes and wrong IDs fail before clicking.
+- Conditional readback: supported invitee-bypass labels may disappear only when the passcode clears and the boolean server bypass flag remains unchanged. Losing unrelated controls, unknown child labels, missing flags or changed permissions fails verification. Supported label variants currently have synthetic coverage and await live confirmation.
 
 ## Manual end-to-end
 

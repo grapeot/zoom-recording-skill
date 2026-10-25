@@ -7,6 +7,11 @@ from urllib.parse import quote, urlsplit
 from . import guard, parse, zoomweb
 
 SHARE_PATH = "/nws/recording/1.0/share-data"
+# This checkbox is conditional UI under Passcode, not an independent permission change.
+PASSCODE_DEPENDENT_LABELS = {
+    "Allow invitees to access this recording without a passcode",
+    "Allow meeting invitees to access this recording without a passcode",
+}
 
 
 def share_url(result: dict[str, Any]) -> str:
@@ -61,13 +66,31 @@ def inspect(page: Any, meeting_id: str) -> tuple[dict[str, Any], Any]:
                  "share_url": url, "public_link_access": public_link_access, "controls": controls,
                  "access": {k: result.get(k) for k in ("currentShareScopeId", "shareScopeType", "publicRecording",
                              "privateRecording", "enableExpiryDate", "expiryDate", "onDemand",
-                             "waterMarkerFlag", "allowViewersDownload", "allowViewerSeeChat", "allowViewerSeeTranscript")}}
+                             "waterMarkerFlag", "allowViewersDownload", "allowViewerSeeChat", "allowViewerSeeTranscript",
+                             "allowInviteesBypassPasscode")}}
         meeting = {k: detail[k] for k in ("id", "topic", "start", "timezone", "duration_s")}
         return {"meeting": meeting, "settings": state}, dialog
     except (guard.GuardError, zoomweb.PageError):
         raise
     except Exception as e:
         raise zoomweb.PageError(f"sharing inspection failed ({type(e).__name__})") from None
+
+
+def unchanged_controls(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """Compare controls by label, allowing only the documented passcode child to disappear."""
+    old = {c["label"]: c for c in before["controls"] if c["label"] != "Passcode"}
+    new = {c["label"]: c for c in after["controls"] if c["label"] != "Passcode"}
+    removed = old.keys() - new.keys()
+    if removed:
+        old_flag = before["access"].get("allowInviteesBypassPasscode")
+        new_flag = after["access"].get("allowInviteesBypassPasscode")
+        if (not before["passcode_enabled"] or after["passcode_enabled"]
+                or not removed.issubset(PASSCODE_DEPENDENT_LABELS)
+                or not isinstance(old_flag, bool) or not isinstance(new_flag, bool) or old_flag != new_flag):
+            return False
+        for label in removed:
+            del old[label]
+    return old == new
 
 
 def settings(page: Any, meeting_id: str, *, disable: bool, execute: bool,
@@ -112,9 +135,7 @@ def settings(page: Any, meeting_id: str, *, disable: bool, execute: bool,
     finally:
         permit.armed = False
     after, _ = inspect(page, meeting_id)
-    unchanged_before = [c for c in state["controls"] if c["label"] != "Passcode"]
-    unchanged_after = [c for c in after["settings"]["controls"] if c["label"] != "Passcode"]
-    verified = (not after["settings"]["passcode_enabled"] and unchanged_before == unchanged_after
+    verified = (not after["settings"]["passcode_enabled"] and unchanged_controls(state, after["settings"])
                 and state["access"] == after["settings"]["access"]
                 and state["public_link_access"] == after["settings"]["public_link_access"])
     return {**out, "ok": verified, "executed": True, "before": state,
