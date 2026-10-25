@@ -10,6 +10,7 @@ All automated tests are offline: `python -m pytest -q`. They never contact Zoom,
 - Signed-link matching: each link matched to exactly one file by its name; unmatched links and files reported, never guessed.
 - Redaction: URLs lose their query strings; token-shaped strings are replaced; error strings from failed requests carry no signed link.
 - Guards: allowlisted labels pass; deny words in label or text refuse the click; mutation paths are aborted, reads continue.
+- Sharing guard: exact recording ID, endpoint, method, false value, and one-shot arming; reject extra/duplicate fields, enabling passcodes, unknown bodies, other origins and unrelated recording writes. Canonical share URL validation rejects non-Zoom origins and never embeds password/download fields.
 - Own-browser check: command lines with and without the declared port and profile.
 - Source scan: no click, key press, event dispatch, cookie or storage-state calls outside `guard.py`; no reads of request headers.
 - CLI contract: every command, including usage errors and failures, prints exactly one JSON object.
@@ -19,6 +20,7 @@ All automated tests are offline: `python -m pytest -q`. They never contact Zoom,
 - Ranged download against an in-memory fake: from scratch, resume from a partial `.part` file, server that ignores `Range`, a 200 error page mid-file (partial file kept), unknown total size, 416 at the end, size mismatch, ETag md5 match and mismatch, retries after a dropped connection, zero-byte files.
 - `capture_links` against fake page, locator and route objects: the page receives an empty link list, unknown response shapes are aborted, a button-count mismatch clicks nothing, the clip is chosen by position.
 - `download --execute` with fake page driving: manifest written, completed files skipped next time, a refused link answered by fresh links once, second clip, unknown clip, files still processing, user keys in the manifest kept.
+- `settings` with fake page driving: preview and already-off no-op do not uncheck or save; explicit removal permits one Save, disarms on failure, and checks fresh passcode/access/checkbox state. A changed share token is accepted; unchanged passcode or drift in other settings is not reported as success. Locked passcodes and wrong IDs fail before clicking.
 
 ## Manual end-to-end
 
@@ -27,3 +29,5 @@ Run against a signed-in browser: `status`, `list` over a date range, `show` on o
 ## What counts as verified
 
 The offline suite passes on Python 3.10 and 3.12 in CI, and the manual run produced files whose sizes match Zoom's, whose video duration matches within two seconds, and whose transcript parses.
+
+Live sharing verification exercised inspection, preview and `--disable-passcode --execute` on an already-disabled recording. It returned `executed: false`, `readback_verified: true`, and a canonical share URL; no live write was needed. Enabled-to-disabled mutation is covered by offline tests and public client-code inspection, not a live save. Do not claim otherwise or enable a passcode merely to test removal.
