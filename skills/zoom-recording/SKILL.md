@@ -25,7 +25,17 @@ Use this skill when someone wants their Zoom cloud recordings found, inspected o
 
 Install from the repository root: `uv venv && source .venv/bin/activate && uv pip install -e '.[dev]'`. Google Chrome must be installed; `ffprobe` is optional but recommended.
 
-`zoom-rec browser` opens a separate Chrome window with the tool's own profile (`~/.zoom-recording/browser-profile`, change with `--home` or `--profile-dir`) and a DevTools port on 127.0.0.1 (default 9391, change with `--cdp`). Ask the human to sign in there and open Recordings & Transcripts. The sign-in stays in the profile for later runs. If the human already has a Chrome started with a debugging port and its own profile, pass both: `--cdp http://127.0.0.1:PORT --profile-dir /path/to/that/profile` (or set `ZOOM_REC_CDP` and `ZOOM_REC_PROFILE_DIR`).
+`zoom-rec browser` opens a separate Chrome window. Use a fixed, reusable profile directory outside all Git repositories (default `~/.zoom-recording/browser-profile`, change with `--home` or `--profile-dir`), and pass the same `--profile-dir` and loopback `--cdp` flags (or `ZOOM_REC_PROFILE_DIR` and `ZOOM_REC_CDP`) to `browser`, `status`, `list`, `show`, and `download`:
+
+```bash
+zoom-rec browser --profile-dir "$HOME/.zoom-recording/browser-profile" --cdp http://127.0.0.1:9391
+# Ask the human to sign in there and open Recordings & Transcripts.
+zoom-rec status --profile-dir "$HOME/.zoom-recording/browser-profile" --cdp http://127.0.0.1:9391
+```
+
+`ZOOM_REC_PROFILE_DIR` overrides the default profile location. `zoom-rec browser` rejects any profile inside a Git repository (`error: "config"`), even when that path is gitignored. Replace an older workspace-local override with the external profile and have the human sign in there; never copy cookies or browser storage between profiles or bypass the own-browser check.
+
+A persisted profile reuses browser state across runs, but does not guarantee that Zoom stays signed in indefinitely. Before listing or downloading, run `status` and confirm both `browser_verified: true` and `signed_in: true`. If it returns `needs_sign_in`, ask the human to re-authenticate in that same dedicated Chrome window and rerun `status`; do not assume a fixed session lifetime.
 
 ## Commands
 
@@ -69,9 +79,11 @@ Keys you add to `manifest.json` yourself (for example where the recording will b
 
 | `error` | Meaning | Next step |
 |---|---|---|
+| `config` | Invalid configuration; the message identifies the cause. | For an in-repository profile, choose an external `--profile-dir` (as above) or `--home`, replace any stale `ZOOM_REC_PROFILE_DIR`, and have the human sign in there. For invalid `--cdp`, use a loopback address with a port. |
+| `port_in_use` | Something already listens on the DevTools port. | Run `status` with the same profile if it is the intended window; otherwise ask the human to close the old dedicated window or choose an unused local port consistently across commands. Do not kill arbitrary browsers. |
 | `no_browser` | Nothing listens on the DevTools port. | `zoom-rec browser`, or check `--cdp`. |
 | `foreign_browser` | The browser on that port was not started with the declared profile. | Declare the right `--profile-dir`, or use the tool's own browser. Do not bypass. |
-| `needs_sign_in` | Zoom shows a sign-in page. | Ask the human to sign in in that window, then rerun. |
+| `needs_sign_in` | Zoom shows a sign-in page or redirects to an identity provider. | Ask the human to sign in in that same dedicated profile window, then rerun `status`. |
 | `page` | A Zoom web response did not load or did not parse; the message names the endpoint. | Retry once; if it persists the web app changed, report the endpoint name. |
 | `guard_refused` | The click guard refused an element. | Report it; the page layout probably changed. Never click it another way. |
 | `link_rejected` (per file) | Zoom refused or expired a download link. | Rerun; the tool fetches fresh links and resumes. |
@@ -82,5 +94,7 @@ Keys you add to `manifest.json` yourself (for example where the recording will b
 `blocked_requests` in any output lists requests the guard aborted. It should be empty; if it is not, report it.
 
 ## Next steps that are out of scope here
+
+If a request combines downloading with removing a sharing passcode or obtaining a Zoom share link, `zoom-rec` cannot satisfy the sharing portion: `show` lists clip files, not a share URL, and the click guard refuses Share/Copy controls and settings. Complete the requested read-only inspection or download, state that passcode removal and share-link retrieval were not performed, and hand off to the recording owner to update sharing settings and copy the share link in the Zoom web UI. Never substitute a signed download URL for a share link, work around the guards, or add write APIs to complete the request.
 
 Zoom's `transcript.vtt` is sentence-level with speaker prefixes. Turning it into edited, translated or bilingual subtitles is a separate step: parse the cues, map them onto the edited timeline, translate, and validate the result. The `subtitles` module of [circle-client-skill](https://github.com/grapeot/circle-client-skill) (`parse_vtt(..., speakers=True)`, `remap_cues`, `build_bilingual_vtt`, `validate_vtt`) reads this file directly; reuse it rather than writing another parser.
