@@ -150,13 +150,15 @@ def cmd_settings(args: argparse.Namespace) -> dict[str, Any]:
         raise UsageError("--execute requires --disable-passcode")
     permit = guard.PasscodePermit("", args.id)
     with attached(args, permit=permit) as (page, blocked, warnings):
-        permit.origin = zoomweb.origin_of(page)
         try:
             result = sharing.settings(page, args.id, disable=args.disable_passcode,
                                       execute=args.execute, permit=permit)
-        except (guard.GuardError, zoomweb.PageError, parse.PayloadError) as e:
-            result = {"ok": False, "error": "guard_refused" if isinstance(e, guard.GuardError) else "page",
-                      "message": scrub(e), "execution_attempted": permit.consumed,
+        except (guard.GuardError, zoomweb.PageError, parse.PayloadError, KeyboardInterrupt) as e:
+            interrupted = isinstance(e, KeyboardInterrupt)
+            error = "interrupted" if interrupted else "guard_refused" if isinstance(e, guard.GuardError) else "page"
+            result = {"ok": False, "error": error,
+                      "message": "stopped; inspect with settings ID before retrying" if interrupted else scrub(e),
+                      "execution_attempted": permit.consumed,
                       "outcome_unknown": permit.consumed, "readback_verified": False,
                       "allowed_requests": permit.audit}
         return {**result, **_extras(blocked, warnings)}

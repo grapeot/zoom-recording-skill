@@ -7,6 +7,7 @@
 - Documentation only: clarify fixed external profile reuse, recovery from an in-repository profile configuration, and `status` verification after human sign-in. Document the human handoff for sharing passcode changes and share-link retrieval; no CLI or guard behavior changed.
 - Subsequent scope extension: add `settings ID [--disable-passcode] [--execute]` for sharing inspection, canonical share URL output, and explicit passcode removal. The one-shot request permit accepts only the requested recording's `enablePasscode: false`; default reads/downloads retain their guards. Reload verifies passcode removal and unchanged other settings. This supersedes the earlier handoff for passcode removal and share-link retrieval only.
 - Live verification: sharing inspection, preview, and idempotent execute/readback succeeded on an already-disabled recording. No live mutation was needed; enabled-to-disabled Save is covered offline rather than claimed as live-tested.
+- Independent review fixes: bind the one-shot permit to the actual origin after detail-page navigation, test the real inspection/guard chain including regional redirects and mismatched IDs/controls, retain save audit on interruption, and compare the UI link-access flag during readback.
 
 ### 2026-10-23
 

@@ -75,6 +75,8 @@ def settings(page: Any, meeting_id: str, *, disable: bool, execute: bool,
     if permit.meeting_id != meeting_id or (execute and not disable):
         raise guard.GuardError("execution requires a matching recording and explicit passcode removal")
     before, dialog = inspect(page, meeting_id)
+    # Detail navigation can redirect an initial blank/global tab to a regional Zoom host.
+    permit.origin = zoomweb.origin_of(page)
     state = before["settings"]
     change = disable and state["passcode_enabled"]
     out = {"ok": True, "dry_run": not execute, "executed": False, **before,
@@ -113,7 +115,8 @@ def settings(page: Any, meeting_id: str, *, disable: bool, execute: bool,
     unchanged_before = [c for c in state["controls"] if c["label"] != "Passcode"]
     unchanged_after = [c for c in after["settings"]["controls"] if c["label"] != "Passcode"]
     verified = (not after["settings"]["passcode_enabled"] and unchanged_before == unchanged_after
-                and state["access"] == after["settings"]["access"])
+                and state["access"] == after["settings"]["access"]
+                and state["public_link_access"] == after["settings"]["public_link_access"])
     return {**out, "ok": verified, "executed": True, "before": state,
             "settings": after["settings"], "readback_verified": verified,
             **({"error": "readback_mismatch"} if not verified else {})}

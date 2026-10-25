@@ -126,7 +126,7 @@ def test_share_url_never_embeds_password_or_download_fields():
 
 def state(enabled=True):
     return {"meeting": {"id": MID}, "settings": {"passcode_enabled": enabled, "passcode_locked": False,
-            "share_url": ORIGIN + "/rec/share/fake", "access": {"publicRecording": True},
+            "share_url": ORIGIN + "/rec/share/fake", "public_link_access": True, "access": {"publicRecording": True},
             "controls": [{"label": "Passcode", "checked": enabled, "disabled": False},
                          {"label": "Viewers can download", "checked": True, "disabled": False}]}}
 
@@ -148,7 +148,7 @@ def setup_ui(monkeypatch, before, after=None, save_success=True):
     @contextmanager
     def expect(*a, **k):
         yield SimpleNamespace(value=SimpleNamespace(status=200, json=lambda: {"status": save_success}))
-    page = SimpleNamespace(expect_response=expect)
+    page = SimpleNamespace(expect_response=expect, url=ORIGIN + "/recording/detail")
     return page, p, calls
 
 
@@ -175,13 +175,15 @@ def test_write_and_readback_accept_new_share_url(monkeypatch):
     assert calls == ["disable", "save"] and not p.armed
 
 
-@pytest.mark.parametrize("changed", ["passcode", "access", "checkbox"])
+@pytest.mark.parametrize("changed", ["passcode", "access", "checkbox", "public_link_access"])
 def test_readback_mismatch_is_not_success(monkeypatch, changed):
     after = state(False)
     if changed == "passcode":
         after = state(True)
     elif changed == "access":
         after["settings"]["access"]["publicRecording"] = False
+    elif changed == "public_link_access":
+        after["settings"]["public_link_access"] = False
     else:
         after["settings"]["controls"][1]["checked"] = False
     page, p, _ = setup_ui(monkeypatch, state(), after)
@@ -213,18 +215,144 @@ def test_cli_execute_without_requested_change_is_usage_error(capsys):
     assert json.loads(capsys.readouterr().out)["error"] == "usage"
 
 
-def test_cli_retains_attempt_audit_on_uncertain_save(monkeypatch, capsys):
+@pytest.mark.parametrize("failure", [zoomweb.PageError, KeyboardInterrupt])
+def test_cli_retains_attempt_audit_on_uncertain_save(monkeypatch, capsys, failure):
     @contextmanager
     def attached(args, permit):
         yield SimpleNamespace(url=ORIGIN), [], []
     def uncertain(page, meeting_id, *, permit, **kwargs):
+        permit.origin = ORIGIN
         permit.armed = True
         assert permit.accept(URL, "POST", "xhr", f'meetingId={MID}&enablePasscode=false')
         permit.armed = False
-        raise zoomweb.PageError("save outcome uncertain; inspect settings before retrying")
+        raise failure("save outcome uncertain; inspect settings before retrying")
     monkeypatch.setattr(cli, "attached", attached)
     monkeypatch.setattr(sharing, "settings", uncertain)
     assert cli.main(["settings", MID, "--disable-passcode", "--execute"]) == 1
     result = json.loads(capsys.readouterr().out)
     assert result["outcome_unknown"] and result["execution_attempted"]
     assert result["allowed_requests"] and not result["readback_verified"]
+
+
+class SharingPage:
+    """Fake browser, real inspect/click/checkbox chain and simulated server state."""
+    def __init__(self, detail_body, *, enabled=True):
+        self.url = "about:blank"
+        self.detail = copy.deepcopy(detail_body)
+        self.detail["result"]["meet"]["meetingId"] = MID
+        self.server_enabled = self.ui_enabled = enabled
+        self.actions = []
+        self.controls_override = None
+        self.share_id = MID
+        self.permit = None
+        self.waiter = None
+
+    def load_detail(self, page, meeting_id):
+        self.url = "https://us06web.zoom.us/recording/detail"
+        self.ui_enabled = self.server_enabled
+        return self.detail
+
+    def respond(self, save=False):
+        path = guard.SAVE_SETTINGS_PATH if save else sharing.SHARE_PATH
+        body = {"status": True, "result": {"meetingId": self.share_id,
+                "baseUrl": "https://us06web.zoom.us", "encryptMeetId": "fake-token",
+                "publicRecording": True}}
+        response = SimpleNamespace(url="https://us06web.zoom.us" + path, status=200,
+                                   request=SimpleNamespace(method="POST" if save else "GET"), json=lambda: body)
+        predicate, info = self.waiter
+        assert predicate(response)
+        info.value = response
+
+    @contextmanager
+    def expect_response(self, predicate, **kwargs):
+        info = SimpleNamespace()
+        self.waiter = predicate, info
+        yield info
+        self.waiter = None
+
+    def get_by_role(self, role, name=None, **kwargs):
+        if role == "dialog":
+            return self
+        if role == "checkbox" and name is None:
+            return SimpleNamespace(evaluate_all=lambda script: self.controls_override if self.controls_override is not None else [
+                {"label": "Passcode", "checked": self.ui_enabled, "disabled": False},
+                {"label": "Viewers can download", "checked": True, "disabled": False}])
+        return SharingControl(self, name)
+
+    def get_by_text(self, text, **kwargs):
+        return SimpleNamespace(count=lambda: 1)
+
+
+class SharingControl:
+    def __init__(self, page, name):
+        self.page, self.name = page, name
+
+    def count(self):
+        return 1
+
+    def get_attribute(self, name):
+        return "checkbox" if name == "type" else self.name
+
+    def inner_text(self):
+        return self.name
+
+    def is_visible(self):
+        return True
+
+    def is_enabled(self):
+        return True
+
+    def is_checked(self):
+        return self.page.ui_enabled
+
+    def evaluate(self, script):
+        return self.name
+
+    def wait_for(self, **kwargs):
+        pass
+
+    def set_checked(self, value):
+        assert value is False and self.name == "Passcode"
+        self.page.actions.append("uncheck")
+        self.page.ui_enabled = value
+
+    def click(self, **kwargs):
+        self.page.actions.append(self.name)
+        if self.name == "Share":
+            self.page.respond()
+        elif self.name == "Save":
+            p = self.page.permit
+            assert p.accept("https://us06web.zoom.us" + guard.SAVE_SETTINGS_PATH, "POST", "xhr",
+                            f"meetingId={MID}&enablePasscode=false")
+            self.page.server_enabled = self.page.ui_enabled
+            self.page.respond(save=True)
+
+
+def test_real_inspect_and_guard_chain_after_regional_redirect(monkeypatch, detail_body):
+    page = SharingPage(detail_body)
+    monkeypatch.setattr(zoomweb, "load_detail", page.load_detail)
+    p = guard.PasscodePermit(ORIGIN, MID)
+    page.permit = p
+    result = sharing.settings(page, MID, disable=True, execute=True, permit=p)
+    assert result["ok"] and result["executed"] and result["readback_verified"]
+    assert p.origin == "https://us06web.zoom.us" and not p.armed
+    assert page.actions == ["Share", "More settings", "uncheck", "Save", "Share", "More settings"]
+
+
+@pytest.mark.parametrize("failure", ["detail_id", "share_id", "empty_controls", "empty_label", "duplicate_label"])
+def test_real_inspect_rejects_ambiguous_identity_and_controls(monkeypatch, detail_body, failure):
+    page = SharingPage(detail_body)
+    monkeypatch.setattr(zoomweb, "load_detail", page.load_detail)
+    if failure == "detail_id":
+        page.detail["result"]["meet"]["meetingId"] = "other"
+    elif failure == "share_id":
+        page.share_id = "other"
+    elif failure == "empty_controls":
+        page.controls_override = []
+    elif failure == "empty_label":
+        page.controls_override = [{"label": "", "checked": True, "disabled": False}]
+    else:
+        page.controls_override = [{"label": "Passcode", "checked": True, "disabled": False}] * 2
+    with pytest.raises(zoomweb.PageError):
+        sharing.inspect(page, MID)
+    assert "Save" not in page.actions and "uncheck" not in page.actions
