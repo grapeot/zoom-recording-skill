@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from . import __version__, browser, fetch, guard, manifest, parse, verify, zoomweb
+from . import __version__, browser, fetch, guard, manifest, parse, sharing, verify, zoomweb
 from .paths import ConfigError, enclosing_git_repo, resolve_home
 from .redact import scrub
 
@@ -53,7 +53,7 @@ def _iso_date(value: str) -> date:
 
 
 @contextlib.contextmanager
-def attached(args: argparse.Namespace) -> Iterator[tuple[Any, list[str], list[str]]]:
+def attached(args: argparse.Namespace, permit: guard.PasscodePermit | None = None) -> Iterator[tuple[Any, list[str], list[str]]]:
     """Verify the declared browser, attach, pick the work tab and guard it."""
     from playwright.sync_api import sync_playwright
 
@@ -66,7 +66,7 @@ def attached(args: argparse.Namespace) -> Iterator[tuple[Any, list[str], list[st
         _, context = browser.connect(p, session)
         page = browser.work_tab(context)
         blocked: list[str] = []
-        remove = guard.install_request_guard(context, blocked)
+        remove = guard.install_request_guard(context, blocked, permit)
         try:
             yield page, blocked, warnings
         finally:
@@ -143,6 +143,23 @@ def cmd_show(args: argparse.Namespace) -> dict[str, Any]:
         detail = parse.parse_detail(zoomweb.load_detail(page, args.id))
         manifest.assign_local_names(detail["clips"])
         return {"ok": True, "meeting": _public_detail(detail), **_extras(blocked, warnings)}
+
+
+def cmd_settings(args: argparse.Namespace) -> dict[str, Any]:
+    if args.execute and not args.disable_passcode:
+        raise UsageError("--execute requires --disable-passcode")
+    permit = guard.PasscodePermit("", args.id)
+    with attached(args, permit=permit) as (page, blocked, warnings):
+        permit.origin = zoomweb.origin_of(page)
+        try:
+            result = sharing.settings(page, args.id, disable=args.disable_passcode,
+                                      execute=args.execute, permit=permit)
+        except (guard.GuardError, zoomweb.PageError, parse.PayloadError) as e:
+            result = {"ok": False, "error": "guard_refused" if isinstance(e, guard.GuardError) else "page",
+                      "message": scrub(e), "execution_attempted": permit.consumed,
+                      "outcome_unknown": permit.consumed, "readback_verified": False,
+                      "allowed_requests": permit.audit}
+        return {**result, **_extras(blocked, warnings)}
 
 
 def _meeting_folder(args: argparse.Namespace, detail: dict[str, Any]) -> Path:
@@ -302,6 +319,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("show", parents=[common], help="show one recording's clips and files")
     p.add_argument("id", help="recording id from `list`")
     p.set_defaults(func=cmd_show)
+
+    p = sub.add_parser("settings", parents=[common], help="inspect sharing; preview passcode removal unless --execute")
+    p.add_argument("id", help="recording id from `list`")
+    p.add_argument("--disable-passcode", action="store_true", help="plan disabling this recording's passcode only")
+    p.add_argument("--execute", action="store_true", help="save only the planned passcode removal and read back")
+    p.set_defaults(func=cmd_settings)
 
     p = sub.add_parser("download", parents=[common], help="download files of one recording (plan unless --execute)")
     p.add_argument("id", help="recording id from `list`")

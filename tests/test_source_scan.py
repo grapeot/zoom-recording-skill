@@ -10,7 +10,7 @@ FORBIDDEN_CALLS = {
     "cookies", "add_cookies", "clear_cookies", "storage_state", "add_init_script", "set_extra_http_headers",
     "all_headers", "headers_array", "header_value", "set_input_files",
 }
-ALLOWED = {("guard.py", "click")}
+ALLOWED = {("guard.py", "click"), ("guard.py", "set_checked")}
 
 
 def _calls(path: Path):

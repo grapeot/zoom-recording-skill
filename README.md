@@ -1,6 +1,6 @@
 # zoom-recording-skill
 
-An agent skill (`skills/zoom-recording/SKILL.md`) plus a Python command-line tool (`zoom-rec`) that finds your own Zoom cloud recordings and downloads them: the video, the audio, Zoom's transcript, the chat log and closed captions. It works through a visible Chrome window that you sign in to yourself, so you do not need to register a Zoom app or keep an API credential around.
+An agent skill (`skills/zoom-recording/SKILL.md`) plus a Python command-line tool (`zoom-rec`) that finds and downloads your own Zoom cloud recordings, inspects sharing settings and canonical share links, and can remove a recording's sharing passcode when explicitly asked. It works through a visible Chrome window that you sign in to yourself, so you do not need to register a Zoom app or keep an API credential around.
 
 ## Who it is for
 
@@ -11,7 +11,8 @@ People who teach, present or host on Zoom and want their recordings somewhere el
 - It lists recordings over any date range, shows what files a recording has, and downloads the ones you ask for into a folder per meeting, with a `manifest.json` describing them.
 - Downloads resume after an interruption, are checked against the size Zoom reports and are hashed. Video and audio are checked with `ffprobe` when it is installed; transcripts are checked to be valid WebVTT.
 - `download` shows a plan first and only fetches files when run with `--execute`.
-- It never deletes, trashes, renames, moves or shares recordings, never changes passcodes or settings, and never signs in for you.
+- Read-only by default. The only supported write is `settings ID --disable-passcode --execute`, which disables that recording's sharing passcode and reloads to verify the change. It never creates passcodes, changes audience/expiry/viewer permissions, deletes, trashes, renames, moves, uploads, or signs in for you.
+- `settings` returns sharing state and a canonical share URL without an embedded passcode; other sharing changes remain a human task.
 - It never reads or prints your cookies or session, and never writes download links to disk.
 
 Design and safety rules: `docs/design.md`.
@@ -42,6 +43,9 @@ zoom-rec browser                      # opens a separate Chrome window; sign in 
 zoom-rec status                       # browser verified? signed in?
 zoom-rec list --from 2024-01-01 --query "office hour"
 zoom-rec show MEETING_ID
+zoom-rec settings MEETING_ID                                      # sharing state and share URL
+zoom-rec settings MEETING_ID --disable-passcode                    # preview only
+zoom-rec settings MEETING_ID --disable-passcode --execute          # remove passcode, verify readback
 zoom-rec download MEETING_ID --files video,transcript,chat          # plan only
 zoom-rec download MEETING_ID --files video,transcript,chat --execute
 ```
