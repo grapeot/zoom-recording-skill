@@ -7,6 +7,11 @@ from urllib.parse import quote, urlsplit
 from . import guard, parse, zoomweb
 
 SHARE_PATH = "/nws/recording/1.0/share-data"
+# This checkbox is conditional UI under Passcode, not an independent permission change.
+PASSCODE_DEPENDENT_LABELS = {
+    "Allow invitees to access this recording without a passcode",
+    "Allow meeting invitees to access this recording without a passcode",
+}
 
 
 def share_url(result: dict[str, Any]) -> str:
@@ -61,13 +66,31 @@ def inspect(page: Any, meeting_id: str) -> tuple[dict[str, Any], Any]:
                  "share_url": url, "public_link_access": public_link_access, "controls": controls,
                  "access": {k: result.get(k) for k in ("currentShareScopeId", "shareScopeType", "publicRecording",
                              "privateRecording", "enableExpiryDate", "expiryDate", "onDemand",
-                             "waterMarkerFlag", "allowViewersDownload", "allowViewerSeeChat", "allowViewerSeeTranscript")}}
+                             "waterMarkerFlag", "allowViewersDownload", "allowViewerSeeChat", "allowViewerSeeTranscript",
+                             "allowInviteesBypassPasscode")}}
         meeting = {k: detail[k] for k in ("id", "topic", "start", "timezone", "duration_s")}
         return {"meeting": meeting, "settings": state}, dialog
     except (guard.GuardError, zoomweb.PageError):
         raise
     except Exception as e:
         raise zoomweb.PageError(f"sharing inspection failed ({type(e).__name__})") from None
+
+
+def unchanged_controls(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """Compare controls by label, allowing only the documented passcode child to disappear."""
+    old = {c["label"]: c for c in before["controls"] if c["label"] != "Passcode"}
+    new = {c["label"]: c for c in after["controls"] if c["label"] != "Passcode"}
+    removed = old.keys() - new.keys()
+    if removed:
+        old_flag = before["access"].get("allowInviteesBypassPasscode")
+        new_flag = after["access"].get("allowInviteesBypassPasscode")
+        if (not before["passcode_enabled"] or after["passcode_enabled"]
+                or not removed.issubset(PASSCODE_DEPENDENT_LABELS)
+                or not isinstance(old_flag, bool) or not isinstance(new_flag, bool) or old_flag != new_flag):
+            return False
+        for label in removed:
+            del old[label]
+    return old == new
 
 
 def settings(page: Any, meeting_id: str, *, disable: bool, execute: bool,
@@ -94,11 +117,12 @@ def settings(page: Any, meeting_id: str, *, disable: bool, execute: bool,
     guard.disable_passcode(checkbox)
     if checkbox.is_checked():
         raise guard.GuardError("Passcode checkbox did not clear")
+    save_button = dialog.get_by_role("button", name="Save", exact=True)
     permit.armed = True
     try:
         with page.expect_response(lambda r: r.url == permit.origin + guard.SAVE_SETTINGS_PATH
                                   and r.request.method == "POST", timeout=30000) as info:
-            _click(dialog.get_by_role("button", name="Save", exact=True), "save")
+            _click(save_button, "save")
         resp = info.value
         body = resp.json()
         if resp.status != 200 or not isinstance(body, dict) or body.get("status") is not True:
@@ -111,10 +135,15 @@ def settings(page: Any, meeting_id: str, *, disable: bool, execute: bool,
         raise zoomweb.PageError(f"save outcome uncertain ({type(e).__name__}); inspect settings before retrying") from None
     finally:
         permit.armed = False
+    # The response can precede the panel's asynchronous state update. Wait for the
+    # current settings view to close before navigation/readback can race its refresh.
+    try:
+        save_button.wait_for(state="hidden", timeout=30000)
+        page.get_by_role("button", name="More settings", exact=True).wait_for(state="visible", timeout=30000)
+    except Exception as e:
+        raise zoomweb.PageError(f"save UI did not settle ({type(e).__name__}); inspect settings before retrying") from None
     after, _ = inspect(page, meeting_id)
-    unchanged_before = [c for c in state["controls"] if c["label"] != "Passcode"]
-    unchanged_after = [c for c in after["settings"]["controls"] if c["label"] != "Passcode"]
-    verified = (not after["settings"]["passcode_enabled"] and unchanged_before == unchanged_after
+    verified = (not after["settings"]["passcode_enabled"] and unchanged_controls(state, after["settings"])
                 and state["access"] == after["settings"]["access"]
                 and state["public_link_access"] == after["settings"]["public_link_access"])
     return {**out, "ok": verified, "executed": True, "before": state,

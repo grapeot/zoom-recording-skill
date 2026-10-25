@@ -80,9 +80,17 @@ def test_explicit_sharing_click_never_allows_other_controls(label, text):
 ])
 def test_checkbox_guard_only_unchecks_passcode(label, visible, enabled, kind, allowed):
     changes = []
+    checked = [True]
+    def click(**kwargs):
+        changes.append(False)
+        checked[0] = False
+    wrapper = SimpleNamespace(count=lambda: 1, evaluate=lambda script: "SPAN",
+                              get_attribute=lambda n: "recording-share-panel-checkbox__wrap is-checked",
+                              locator=lambda s: SimpleNamespace(count=lambda: 1), inner_text=lambda: label,
+                              click=click)
     locator = SimpleNamespace(count=lambda: 1, is_visible=lambda: visible, is_enabled=lambda: enabled,
                               get_attribute=lambda n: kind, evaluate=lambda s: label,
-                              set_checked=lambda checked: changes.append(checked))
+                              is_checked=lambda: checked[0], locator=lambda s: wrapper)
     if allowed:
         guard.disable_passcode(locator)
         assert changes == [False]
@@ -90,6 +98,34 @@ def test_checkbox_guard_only_unchecks_passcode(label, visible, enabled, kind, al
         with pytest.raises(guard.GuardError):
             guard.disable_passcode(locator)
         assert changes == []
+
+
+@pytest.mark.parametrize("bad_part", ["tag", "class", "count", "label", "still_checked"])
+def test_checkbox_wrapper_fails_closed(bad_part):
+    clicks = []
+    checked = [True]
+    def click(**kwargs):
+        clicks.append("wrapper")
+        if bad_part != "still_checked":
+            checked[0] = False
+    wrapper = SimpleNamespace(count=lambda: 1,
+        evaluate=lambda s: "DIV" if bad_part == "tag" else "SPAN",
+        get_attribute=lambda n: "wrong-wrapper" if bad_part == "class" else "recording-share-panel-checkbox__wrap",
+        locator=lambda s: SimpleNamespace(count=lambda: 2 if bad_part == "count" else 1),
+        inner_text=lambda: "Viewers can download" if bad_part == "label" else "Passcode", click=click)
+    locator = SimpleNamespace(count=lambda: 1, is_visible=lambda: True, is_enabled=lambda: True,
+        get_attribute=lambda n: "checkbox", evaluate=lambda s: "Passcode",
+        is_checked=lambda: checked[0], locator=lambda s: wrapper)
+    with pytest.raises(guard.GuardError):
+        guard.disable_passcode(locator)
+    assert clicks == (["wrapper"] if bad_part == "still_checked" else [])
+
+
+def test_checkbox_already_off_never_clicks_wrapper():
+    locator = SimpleNamespace(count=lambda: 1, is_visible=lambda: True, is_enabled=lambda: True,
+        get_attribute=lambda n: "checkbox", evaluate=lambda s: "Passcode", is_checked=lambda: False)
+    # No wrapper accessor: reaching one would fail instead of toggling an already-off input.
+    guard.disable_passcode(locator)
 
 
 def test_guard_permit_does_not_open_other_endpoints_or_fields():
@@ -134,7 +170,8 @@ def state(enabled=True):
 def setup_ui(monkeypatch, before, after=None, save_success=True):
     calls = []
     checkbox = SimpleNamespace(is_checked=lambda: False)
-    dialog = SimpleNamespace(get_by_role=lambda *a, **k: checkbox)
+    save_button = SimpleNamespace(wait_for=lambda **k: calls.append("save_hidden"))
+    dialog = SimpleNamespace(get_by_role=lambda role, **k: checkbox if role == "checkbox" else save_button)
     values = iter([before, after] if after else [before])
     monkeypatch.setattr(sharing, "inspect", lambda *a: (copy.deepcopy(next(values)), dialog))
     monkeypatch.setattr(guard, "disable_passcode", lambda *a: calls.append("disable"))
@@ -148,7 +185,9 @@ def setup_ui(monkeypatch, before, after=None, save_success=True):
     @contextmanager
     def expect(*a, **k):
         yield SimpleNamespace(value=SimpleNamespace(status=200, json=lambda: {"status": save_success}))
-    page = SimpleNamespace(expect_response=expect, url=ORIGIN + "/recording/detail")
+    more = SimpleNamespace(wait_for=lambda **k: calls.append("more_visible"))
+    page = SimpleNamespace(expect_response=expect, url=ORIGIN + "/recording/detail", get_by_role=lambda *a, **k: more)
+    page.save_button = save_button
     return page, p, calls
 
 
@@ -172,7 +211,7 @@ def test_write_and_readback_accept_new_share_url(monkeypatch):
     page, p, calls = setup_ui(monkeypatch, state(), after)
     result = sharing.settings(page, MID, disable=True, execute=True, permit=p)
     assert result["ok"] and result["executed"] and result["readback_verified"]
-    assert calls == ["disable", "save"] and not p.armed
+    assert calls == ["disable", "save", "save_hidden", "more_visible"] and not p.armed
 
 
 @pytest.mark.parametrize("changed", ["passcode", "access", "checkbox", "public_link_access"])
@@ -192,11 +231,62 @@ def test_readback_mismatch_is_not_success(monkeypatch, changed):
     assert result["error"] == "readback_mismatch" and not p.armed
 
 
+@pytest.mark.parametrize("label", sorted(sharing.PASSCODE_DEPENDENT_LABELS))
+def test_conditional_passcode_child_can_disappear_without_permission_change(monkeypatch, label):
+    before, after = state(), state(False)
+    before["settings"]["controls"].append({"label": label, "checked": True, "disabled": False})
+    for snapshot in (before, after):
+        snapshot["settings"]["access"]["allowInviteesBypassPasscode"] = True
+    page, p, _ = setup_ui(monkeypatch, before, after)
+    result = sharing.settings(page, MID, disable=True, execute=True, permit=p)
+    assert result["ok"] and result["readback_verified"]
+
+
+@pytest.mark.parametrize("failure", ["unknown_child", "changed_flag", "missing_flag", "non_boolean_flag", "lost_download"])
+def test_disappearing_control_is_not_blanket_exempt(monkeypatch, failure):
+    before, after = state(), state(False)
+    child = {"label": "Allow invitees to access this recording without a passcode", "checked": True, "disabled": False}
+    before["settings"]["controls"].append(child)
+    for snapshot in (before, after):
+        snapshot["settings"]["access"]["allowInviteesBypassPasscode"] = True
+    if failure == "unknown_child":
+        child["label"] = "Allow strangers to change settings"
+    elif failure == "changed_flag":
+        after["settings"]["access"]["allowInviteesBypassPasscode"] = False
+    elif failure == "missing_flag":
+        after["settings"]["access"].pop("allowInviteesBypassPasscode")
+    elif failure == "non_boolean_flag":
+        after["settings"]["access"]["allowInviteesBypassPasscode"] = 1
+    else:
+        after["settings"]["controls"] = after["settings"]["controls"][:1]
+    page, p, _ = setup_ui(monkeypatch, before, after)
+    result = sharing.settings(page, MID, disable=True, execute=True, permit=p)
+    assert not result["ok"] and result["error"] == "readback_mismatch"
+
+
 def test_failed_save_disarms_permit(monkeypatch):
     page, p, _ = setup_ui(monkeypatch, state(), save_success=False)
     with pytest.raises(zoomweb.PageError, match="save failed"):
         sharing.settings(page, MID, disable=True, execute=True, permit=p)
     assert not p.armed
+
+
+@pytest.mark.parametrize("gate", ["save_hidden", "more_visible"])
+def test_unsettled_save_ui_stops_before_readback(monkeypatch, gate):
+    page, p, calls = setup_ui(monkeypatch, state())
+    def timeout(**kwargs):
+        assert not p.armed
+        raise TimeoutError()
+    def get(role, **kwargs):
+        return SimpleNamespace(wait_for=timeout)
+    if gate == "save_hidden":
+        page.save_button.wait_for = timeout
+    else:
+        page.get_by_role = get
+    with pytest.raises(zoomweb.PageError, match="save UI did not settle"):
+        sharing.settings(page, MID, disable=True, execute=True, permit=p)
+    assert p.consumed and not p.armed
+    assert calls == ["disable", "save"] + (["save_hidden"] if gate == "more_visible" else [])
 
 
 def test_locked_passcode_and_wrong_recording_fail_before_click(monkeypatch):
@@ -246,8 +336,12 @@ class SharingPage:
         self.share_id = MID
         self.permit = None
         self.waiter = None
+        self.save_sent = False
+        self.ui_settled = False
+        self.waits = []
 
     def load_detail(self, page, meeting_id):
+        assert not self.save_sent or self.ui_settled, "readback raced the pending save UI update"
         self.url = "https://us06web.zoom.us/recording/detail"
         self.ui_enabled = self.server_enabled
         return self.detail
@@ -309,12 +403,22 @@ class SharingControl:
         return self.name
 
     def wait_for(self, **kwargs):
-        pass
+        self.page.waits.append((self.name, kwargs["state"]))
+        if self.name == "Save" and kwargs["state"] == "hidden":
+            assert self.page.save_sent
+            self.page.server_enabled = self.page.ui_enabled
+            self.page.ui_settled = True
+        elif self.name == "More settings" and self.page.save_sent:
+            assert self.page.ui_settled
 
-    def set_checked(self, value):
-        assert value is False and self.name == "Passcode"
-        self.page.actions.append("uncheck")
-        self.page.ui_enabled = value
+    def locator(self, selector):
+        assert selector == ".." and self.name == "Passcode"
+        def uncheck(**kwargs):
+            self.page.actions.append("uncheck")
+            self.page.ui_enabled = False
+        return SimpleNamespace(count=lambda: 1, evaluate=lambda s: "SPAN",
+            get_attribute=lambda n: "recording-share-panel-checkbox__wrap",
+            locator=lambda s: SimpleNamespace(count=lambda: 1), inner_text=lambda: "Passcode", click=uncheck)
 
     def click(self, **kwargs):
         self.page.actions.append(self.name)
@@ -324,7 +428,7 @@ class SharingControl:
             p = self.page.permit
             assert p.accept("https://us06web.zoom.us" + guard.SAVE_SETTINGS_PATH, "POST", "xhr",
                             f"meetingId={MID}&enablePasscode=false")
-            self.page.server_enabled = self.page.ui_enabled
+            self.page.save_sent = True
             self.page.respond(save=True)
 
 
@@ -337,6 +441,8 @@ def test_real_inspect_and_guard_chain_after_regional_redirect(monkeypatch, detai
     assert result["ok"] and result["executed"] and result["readback_verified"]
     assert p.origin == "https://us06web.zoom.us" and not p.armed
     assert page.actions == ["Share", "More settings", "uncheck", "Save", "Share", "More settings"]
+    hidden = page.waits.index(("Save", "hidden"))
+    assert page.waits[hidden + 1] == ("More settings", "visible")
 
 
 @pytest.mark.parametrize("failure", ["detail_id", "share_id", "empty_controls", "empty_label", "duplicate_label"])

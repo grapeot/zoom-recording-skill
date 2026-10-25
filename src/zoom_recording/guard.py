@@ -87,7 +87,7 @@ def safe_click(locator: Any, allow: re.Pattern[str], timeout_ms: int = 10000,
 
 
 def disable_passcode(locator: Any) -> None:
-    """Only the visible, enabled checkbox named exactly Passcode may be unchecked."""
+    """Uncheck Passcode through its verified wrapper; Zoom's decoration covers the input."""
     if locator.count() != 1 or not locator.is_visible() or not locator.is_enabled():
         raise GuardError("expected one visible enabled Passcode checkbox")
     if locator.get_attribute("type") != "checkbox":
@@ -95,7 +95,17 @@ def disable_passcode(locator: Any) -> None:
     label = locator.evaluate("e => (e.getAttribute('aria-labelledby') || '').split(/\\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ').trim()")
     if label != "Passcode":
         raise GuardError("checkbox label is not exactly Passcode")
-    locator.set_checked(False)
+    if not locator.is_checked():
+        return
+    wrapper = locator.locator("..")
+    if (wrapper.count() != 1 or wrapper.evaluate("e => e.tagName") != "SPAN"
+            or "recording-share-panel-checkbox__wrap" not in (wrapper.get_attribute("class") or "").split()
+            or wrapper.locator('input[type="checkbox"]').count() != 1
+            or " ".join(wrapper.inner_text().split()) != "Passcode"):
+        raise GuardError("unexpected Passcode checkbox wrapper; nothing clicked")
+    wrapper.click(timeout=10000)
+    if locator.is_checked():
+        raise GuardError("Passcode wrapper click did not clear the checkbox")
 
 
 SAVE_SETTINGS_PATH = "/nws/recording/1.0/save-share-setting"
