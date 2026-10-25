@@ -2,6 +2,10 @@
 
 ## Changelog
 
+### 2026-10-24
+
+- Documentation only: clarify fixed external profile reuse, recovery from an in-repository profile configuration, and `status` verification after human sign-in. Document the human handoff for sharing passcode changes and share-link retrieval; no CLI or guard behavior changed.
+
 ### 2026-10-23
 
 - Scaffold: README, AGENTS.md, design and test notes, skill stub, CI, MIT license.
@@ -20,3 +24,5 @@
 - Do not let the guard block static assets. The app ships JavaScript and CSS for its delete and trash dialogs (file names contain "trash" and "delete"); aborting them stops the recordings list from loading at all. The guard only considers API and document requests.
 - The detail page's per-file download icons are hidden until hover and are not reliably clickable; the per-clip Download button plus its confirmation dialog ("Download recording files") is stable. Its accessible label is "Download " + the clip name, which is "Recording 1", "Recording 2" for multi-clip meetings but plain "Recording" on some single-clip meetings (and owners can rename clips), so match the visible text "Download" and the clip's position instead of a fixed label. The dialog does not appear once the user ticked "Do not remind me again", so the confirmation step is optional.
 - When the batch-download response is intercepted, return an empty file list to the page; otherwise Chrome starts its own downloads of every file into the user's Downloads folder.
+- 2026-10-24: `browser` rejected an older profile inside a Git repository, even though the directory was ignored. Launching with a fixed external profile (`~/.zoom-recording/browser-profile`) and having the human sign in yielded `browser_verified: true` and `signed_in: true` from `status`. Replace stale profile overrides; do not copy cookies/storage or weaken the own-browser check. Persisted state does not guarantee permanent authentication: recheck `status` and ask for human sign-in in the same profile when needed, without assuming a fixed session lifetime.
+- 2026-10-24: Downloading and sharing are separate capabilities. `show` returns file metadata rather than a share URL; the click guard blocks Share/Copy and passcode controls. Hand sharing changes and link retrieval to the recording owner in Zoom's UI, report the unfinished portion explicitly, and never substitute signed download credentials for a share link.
