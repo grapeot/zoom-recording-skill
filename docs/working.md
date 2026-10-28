@@ -2,6 +2,10 @@
 
 ## Changelog
 
+### 2026-10-28
+
+- Documentation only: add `skills/zoom-meeting/` for scheduling one meeting in the visible signed-in Chrome and, when the user named a recipient, sending an Outlook invite. No `zoom-rec` subcommand, no Zoom REST schedule call, and no change to recording guards. Selectors are notes from one live schedule page, not a blind script. The recording CLI remains read-only except the existing passcode removal command.
+
 ### 2026-10-24
 
 - Documentation only: clarify fixed external profile reuse, recovery from an in-repository profile configuration, and `status` verification after human sign-in. Document the human handoff for sharing passcode changes and share-link retrieval; no CLI or guard behavior changed.

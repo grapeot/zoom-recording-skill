@@ -6,7 +6,7 @@ Let a coding agent find and download the owner's own Zoom cloud recordings into 
 
 ## Non-goals
 
-- Deleting, trashing, renaming, moving or uploading recordings; creating passcodes, changing audience, expiry, registration or viewer permissions, sending invitations, or any settings change other than disabling a recording's sharing passcode.
+- Deleting, trashing, renaming, moving or uploading recordings; creating passcodes, changing audience, expiry, registration or viewer permissions, sending invitations, or any settings change other than disabling a recording's sharing passcode. Scheduling a meeting is outside this CLI; see `skills/zoom-meeting/SKILL.md`. Do not implement it by weakening the guards below.
 - Recordings the signed-in user cannot already see on the "Recordings & Transcripts" page.
 - Unattended operation without a signed-in browser, and any form of automated sign-in.
 - Bulk archiving of an organization's recordings.

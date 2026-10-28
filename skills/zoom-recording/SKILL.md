@@ -16,7 +16,7 @@ Use this skill when someone wants their Zoom cloud recordings found, inspected o
 
 ## Boundaries
 
-- Read-only by default. The only supported write is `settings ID --disable-passcode --execute`. No deleting, trashing, renaming, moving, uploads, "Add to Zoom Clips", creating passcodes, audience/expiry/viewer permission changes or invitations. Never work around the guards with your own browser scripting.
+- Read-only by default. The only supported write is `settings ID --disable-passcode --execute`. No deleting, trashing, renaming, moving, uploads, "Add to Zoom Clips", creating passcodes, audience/expiry/viewer permission changes or invitations. Never work around the guards with your own browser scripting. Scheduling a meeting is a separate browser skill (`skills/zoom-meeting/SKILL.md`) and must not be done by weakening recording guards or by adding a Zoom API schedule command.
 - Never sign in for the human, never type into a Zoom or SSO sign-in page, never read or export cookies, storage or tokens.
 - Signed download links are credentials. Do not print, log or save them. Canonical share URLs from `settings` are authorized output and contain no embedded `pwd`; never substitute a download URL for a share URL or read passcode input values.
 - Only drive the tool's own browser, or one the human started and declared with `--cdp` and `--profile-dir`.
