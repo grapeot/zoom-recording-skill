@@ -12,6 +12,7 @@ People who teach, present or host on Zoom and want their recordings somewhere el
 - Downloads resume after an interruption, are checked against the size Zoom reports and are hashed. Video and audio are checked with `ffprobe` when it is installed; transcripts are checked to be valid WebVTT.
 - `download` shows a plan first and only fetches files when run with `--execute`.
 - Read-only by default. The only supported write is `settings ID --disable-passcode --execute`, which disables that recording's sharing passcode and reloads to verify the change. It never creates passcodes, changes audience/expiry/viewer permissions, deletes, trashes, renames, moves, uploads, or signs in for you.
+- Scheduling a meeting is a separate browser skill, `skills/zoom-meeting/SKILL.md`. It is not a `zoom-rec` command and must not be done by weakening recording guards or by adding a Zoom API schedule command.
 - `settings` returns sharing state and a canonical share URL without an embedded passcode; other sharing changes remain a human task.
 - It never reads or prints your cookies or session, and never writes download links to disk.
 
