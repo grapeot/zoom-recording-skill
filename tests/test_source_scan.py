@@ -10,7 +10,12 @@ FORBIDDEN_CALLS = {
     "cookies", "add_cookies", "clear_cookies", "storage_state", "add_init_script", "set_extra_http_headers",
     "all_headers", "headers_array", "header_value", "set_input_files",
 }
-ALLOWED = {("guard.py", "click")}
+ALLOWED = {("guard.py", "click"), ("guard.py", "fill")}
+# Inside guard.py, each allowed call may only appear in the guard function that owns it.
+ALLOWED_FUNCTIONS = {
+    "click": {"safe_click", "disable_passcode", "meeting_click", "uncheck_waiting_room"},
+    "fill": {"meeting_fill"},
+}
 
 
 def _calls(path: Path):
@@ -27,6 +32,32 @@ def test_no_forbidden_calls_outside_guard():
             if name in FORBIDDEN_CALLS and (path.name, name) not in ALLOWED:
                 hits.append(f"{path.name}:{line} .{name}(")
     assert hits == []
+
+
+def test_allowed_calls_stay_in_their_guard_functions():
+    tree = ast.parse((SRC / "guard.py").read_text(encoding="utf-8"))
+    hits = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ALLOWED_FUNCTIONS:
+                if fn.name not in ALLOWED_FUNCTIONS[node.func.attr]:
+                    hits.append(f"guard.py:{node.lineno} .{node.func.attr}( in {fn.name}")
+    assert hits == []
+    # and none at module level outside a function
+    module_calls = [n for n in tree.body if not isinstance(n, (ast.FunctionDef, ast.ClassDef))
+                    for c in ast.walk(n) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                    and c.func.attr in ALLOWED_FUNCTIONS]
+    assert module_calls == []
+
+
+def test_meeting_fills_never_include_the_invitee_field():
+    from zoom_recording import guard
+    labels = {label.lower() for _, label in guard.MEETING_FILLS.values()}
+    assert not any(word in label for label in labels for word in ("invite", "email", "user names", "passcode"))
+    text = "".join(p.read_text(encoding="utf-8") for p in SRC.glob("*.py"))
+    assert "Enter user names or email addresses" not in text
 
 
 def test_no_click_or_key_events_in_page_scripts():

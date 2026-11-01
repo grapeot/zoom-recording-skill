@@ -17,6 +17,7 @@ dependencies = [
 dev = ["pytest>=8"]
 
 [project.scripts]
+zoom-cli = "zoom_recording.cli:main_cli"
 zoom-rec = "zoom_recording.cli:main"
 
 [tool.setuptools.packages.find]

@@ -1,6 +1,6 @@
 # zoom-recording-skill
 
-An agent skill (`skills/zoom-recording/SKILL.md`) plus a Python command-line tool (`zoom-rec`) that finds and downloads your own Zoom cloud recordings, inspects sharing settings and canonical share links, and can remove a recording's sharing passcode when explicitly asked. It works through a visible Chrome window that you sign in to yourself, so you do not need to register a Zoom app or keep an API credential around.
+Agent skills (`skills/zoom-recording/SKILL.md`, `skills/zoom-meeting/SKILL.md`) plus a Python command-line tool, `zoom-cli`, that finds and downloads your own Zoom cloud recordings, inspects sharing settings and canonical share links, can remove a recording's sharing passcode when explicitly asked, and lists, schedules and deletes your meetings. It works through a visible Chrome window that you sign in to yourself, so you do not need to register a Zoom app or keep an API credential around. `zoom-rec`, the original name, remains as a compatible alias.
 
 ## Who it is for
 
@@ -11,8 +11,10 @@ People who teach, present or host on Zoom and want their recordings somewhere el
 - It lists recordings over any date range, shows what files a recording has, and downloads the ones you ask for into a folder per meeting, with a `manifest.json` describing them.
 - Downloads resume after an interruption, are checked against the size Zoom reports and are hashed. Video and audio are checked with `ffprobe` when it is installed; transcripts are checked to be valid WebVTT.
 - `download` shows a plan first and only fetches files when run with `--execute`.
-- Read-only by default. The only supported write is `settings ID --disable-passcode --execute`, which disables that recording's sharing passcode and reloads to verify the change. It never creates passcodes, changes audience/expiry/viewer permissions, deletes, trashes, renames, moves, uploads, or signs in for you.
-- Scheduling a meeting is a separate browser skill, `skills/zoom-meeting/SKILL.md`. It is not a `zoom-rec` command and must not be done by weakening recording guards or by adding a Zoom API schedule command.
+- Recordings are read-only by default. The only supported recording write is `recordings settings ID --disable-passcode --execute`, which disables that recording's sharing passcode and reloads to verify the change. It never creates passcodes, changes audience/expiry/viewer permissions, deletes, trashes, renames, moves, uploads, or signs in for you.
+- `meetings schedule` creates one meeting with no Zoom invitees, Waiting Room off and Passcode left as the form has it, then reopens the meeting's edit page to check every field. `meetings delete` deletes one meeting only when its number and `--expect-topic` both match; Zoom keeps it in Recently Deleted for 7 days. Both print a plan unless run with `--execute`, and `--demo` slows them down and outlines on the page what the tool is reading or about to click.
+- Each write command lets exactly one request through, at the moment it presses Save or the dialog's Delete, and only if that request matches what was asked; every other write is aborted by a request guard on the whole browser context. A redesigned page can fool a selector, not the request check.
+- It never adds Zoom invitees (they get email), opens or saves account-wide settings, empties Recently Deleted, or changes recordings from the meetings commands.
 - `settings` returns sharing state and a canonical share URL without an embedded passcode; other sharing changes remain a human task.
 - It never reads or prints your cookies or session, and never writes download links to disk.
 
@@ -40,18 +42,24 @@ Give your coding agent this repository's URL and ask it to install the skill. Th
 ## Quick start
 
 ```bash
-zoom-rec browser                      # opens a separate Chrome window; sign in to Zoom there
-zoom-rec status                       # browser verified? signed in?
-zoom-rec list --from 2024-01-01 --query "office hour"
-zoom-rec show MEETING_ID
-zoom-rec settings MEETING_ID                                      # sharing state and share URL
-zoom-rec settings MEETING_ID --disable-passcode                    # preview only
-zoom-rec settings MEETING_ID --disable-passcode --execute          # remove passcode, verify readback
-zoom-rec download MEETING_ID --files video,transcript,chat          # plan only
-zoom-rec download MEETING_ID --files video,transcript,chat --execute
+zoom-cli browser                      # opens a separate Chrome window; sign in to Zoom there
+zoom-cli status                       # browser verified? signed in?
+
+zoom-cli recordings list --from 2024-01-01 --query "office hour"
+zoom-cli recordings show RECORDING_ID
+zoom-cli recordings settings RECORDING_ID                                # sharing state and share URL
+zoom-cli recordings settings RECORDING_ID --disable-passcode --execute   # remove passcode, verify readback
+zoom-cli recordings download RECORDING_ID --files video,transcript,chat  # plan only
+zoom-cli recordings download RECORDING_ID --files video,transcript,chat --execute
+
+zoom-cli meetings list
+zoom-cli meetings schedule --topic "Office hour" --date 2026-11-03 --start 10:00 --duration 30 \
+    --tz America/Los_Angeles                       # plan only
+zoom-cli meetings schedule ... --execute           # create and read back
+zoom-cli meetings delete MEETING_NUMBER --expect-topic "Office hour" --execute
 ```
 
-The skill file has the full command reference and the output format.
+`zoom-rec list`, `zoom-rec show`, `zoom-rec settings` and `zoom-rec download` keep working exactly as before. The skill files have the full command reference and the output format.
 
 ## License
 

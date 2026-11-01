@@ -1,4 +1,8 @@
-"""`zoom-rec`: list, inspect and download your own Zoom cloud recordings.
+"""`zoom-cli`: your own Zoom cloud recordings and meetings through a signed-in Chrome window.
+
+`zoom-cli recordings ...` lists, inspects and downloads recordings; `zoom-cli meetings ...` lists,
+schedules and deletes meetings. `zoom-rec` is the original name and stays a compatible alias: its
+flat commands (`zoom-rec list`, `show`, `download`, `settings`) are the recordings commands.
 
 Every command prints exactly one JSON object to stdout, including on error. Progress goes to stderr.
 """
@@ -9,11 +13,13 @@ import argparse
 import contextlib
 import json
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from . import __version__, browser, fetch, guard, manifest, parse, sharing, verify, zoomweb
+from . import __version__, browser, fetch, guard, manifest, meetings, parse, sharing, verify, zoomweb
+from .demo import Demo
 from .paths import ConfigError, enclosing_git_repo, resolve_home
 from .redact import scrub
 
@@ -53,8 +59,9 @@ def _iso_date(value: str) -> date:
 
 
 @contextlib.contextmanager
-def attached(args: argparse.Namespace, permit: guard.PasscodePermit | None = None) -> Iterator[tuple[Any, list[str], list[str]]]:
-    """Verify the declared browser, attach, pick the work tab and guard it."""
+def _attach(args: argparse.Namespace, permit: Any = None, *, meetings_scope: bool = False,
+            slow_mo: int = 0) -> Iterator[tuple[Any, list[str], list[str]]]:
+    """Verify the declared browser, attach, pick the work tab and guard the whole context."""
     from playwright.sync_api import sync_playwright
 
     session = browser.session_for(resolve_home(args.home), args.cdp, args.profile_dir)
@@ -63,15 +70,30 @@ def attached(args: argparse.Namespace, permit: guard.PasscodePermit | None = Non
         raise _Refusal(check)
     warnings = browser.profile_warnings(session)
     with sync_playwright() as p:
-        _, context = browser.connect(p, session)
-        page = browser.work_tab(context)
+        _, context = browser.connect(p, session, slow_mo=slow_mo)
+        page = browser.meeting_tab(context) if meetings_scope else browser.work_tab(context)
         blocked: list[str] = []
-        remove = guard.install_request_guard(context, blocked, permit)
+        remove = guard.install_request_guard(context, blocked, permit, meetings=meetings_scope)
         try:
             yield page, blocked, warnings
         finally:
             with contextlib.suppress(Exception):
                 remove()
+
+
+@contextlib.contextmanager
+def attached(args: argparse.Namespace, permit: guard.PasscodePermit | None = None) -> Iterator[tuple[Any, list[str], list[str]]]:
+    """Recording commands: verify the declared browser, attach, pick the work tab and guard it."""
+    with _attach(args, permit) as got:
+        yield got
+
+
+@contextlib.contextmanager
+def attached_meetings(args: argparse.Namespace, permit: Any = None,
+                      slow_mo: int = 0) -> Iterator[tuple[Any, list[str], list[str]]]:
+    """Meeting commands: like `attached`, with the stricter meeting request rule on the context."""
+    with _attach(args, permit, meetings_scope=True, slow_mo=slow_mo) as got:
+        yield got
 
 
 class _Refusal(Exception):
@@ -290,27 +312,109 @@ def cmd_download(args: argparse.Namespace) -> dict[str, Any]:
                 "manifest": str(folder / manifest.MANIFEST), **_extras(blocked, warnings)}
 
 
+# ---------------------------------------------------------------- meetings
+
+def _elapsed(start: float) -> float:
+    return round(time.monotonic() - start, 2)
+
+
+def _write_failure(e: BaseException, permit: Any, verb: str) -> dict[str, Any]:
+    """A failed or interrupted meeting write, with whether the one permitted request went out."""
+    if isinstance(e, KeyboardInterrupt):
+        error, message = "interrupted", f"stopped; run `zoom-cli meetings list` before retrying the {verb}"
+    elif isinstance(e, guard.SelectorError):
+        error, message = "selector", scrub(e)
+    elif isinstance(e, guard.GuardError):
+        error, message = "guard_refused", scrub(e)
+    else:
+        error, message = "page", scrub(e)
+    out: dict[str, Any] = {"ok": False, "error": error, "message": message,
+                           "execution_attempted": permit.consumed, "outcome_unknown": permit.consumed,
+                           "allowed_requests": permit.audit}
+    if isinstance(e, guard.SelectorError):
+        out["selector"] = e.detail
+    if getattr(permit, "refused", None):
+        out["permit_refused"] = permit.refused
+    return out
+
+
+def cmd_meetings_list(args: argparse.Namespace) -> dict[str, Any]:
+    if args.max_pages < 1:
+        raise UsageError("--max-pages must be at least 1")
+    window = meetings.window_for(args.to) if args.to else {}
+    with attached_meetings(args) as (page, blocked, warnings):
+        listing = meetings.list_all(page, args.max_pages, window, log=log)
+        return {"ok": True, **listing, **_extras(blocked, warnings)}
+
+
+def cmd_meetings_schedule(args: argparse.Namespace) -> dict[str, Any]:
+    start = time.monotonic()
+    try:
+        spec = meetings.parse_spec(args.topic, args.date, args.start, args.duration, args.tz, args.description)
+    except meetings.SpecError as e:
+        raise UsageError(str(e)) from None
+    demo = Demo(args.demo)
+    permit = guard.CreateMeetingPermit("", {})
+    with attached_meetings(args, permit, slow_mo=demo.slow_mo) as (page, blocked, warnings):
+        if not args.execute:
+            plan = meetings.schedule_plan(page, spec, demo)
+            return {"ok": not plan["duplicates"], "dry_run": True, "executed": False, "meeting": spec.public(),
+                    **({"error": "duplicate_meeting", "duplicates": plan["duplicates"]} if plan["duplicates"] else {}),
+                    "will_request": {"method": "POST", "path": guard.CREATE_MEETING_PATH,
+                                     "fields": {**spec.permit_fields(), "waiting_room": False,
+                                                "passcode": "unchanged from the form", "invitees": 0}},
+                    "next": "rerun with --execute to create it and read it back", "elapsed_s": _elapsed(start),
+                    **_extras(blocked, warnings)}
+        try:
+            result = meetings.schedule_execute(page, spec, permit, demo, blocked)
+        except (guard.GuardError, zoomweb.PageError, KeyboardInterrupt) as e:
+            result = _write_failure(e, permit, "schedule")
+        return {"dry_run": False, "meeting": {**spec.public(), **({"id": result.pop("meeting_id")}
+                                                                  if "meeting_id" in result else {})},
+                **result, "allowed_requests": permit.audit, "elapsed_s": _elapsed(start),
+                **_extras(blocked, warnings)}
+
+
+def cmd_meetings_delete(args: argparse.Namespace) -> dict[str, Any]:
+    start = time.monotonic()
+    if not meetings.MEETING_ID.fullmatch(args.id):
+        raise UsageError("ID must be the meeting number (digits only, no spaces)")
+    expect = " ".join((args.expect_topic or "").split())
+    if not expect:
+        raise UsageError("--expect-topic is required and must not be empty")
+    demo = Demo(args.demo)
+    permit = guard.DeleteMeetingPermit("", args.id)
+    with attached_meetings(args, permit, slow_mo=demo.slow_mo) as (page, blocked, warnings):
+        try:
+            result = meetings.delete_meeting(page, args.id, expect, execute=args.execute, permit=permit,
+                                             demo=demo, blocked=blocked)
+        except (guard.GuardError, zoomweb.PageError, KeyboardInterrupt) as e:
+            result = _write_failure(e, permit, "delete")
+        return {**result, "allowed_requests": permit.audit, "elapsed_s": _elapsed(start),
+                **_extras(blocked, warnings)}
+
+
 # ---------------------------------------------------------------- parser
 
-def build_parser() -> argparse.ArgumentParser:
+def _common() -> argparse.ArgumentParser:
     common = _Parser(add_help=False)
     common.add_argument("--cdp", help="DevTools endpoint of the browser to drive, e.g. http://127.0.0.1:9391 "
                                       "(env ZOOM_REC_CDP; default port 9391)")
     common.add_argument("--profile-dir", help="profile directory the browser was started with "
                                               "(env ZOOM_REC_PROFILE_DIR; default <home>/browser-profile)")
     common.add_argument("--home", help="the tool's home directory (env ZOOM_REC_HOME; default ~/.zoom-recording)")
+    return common
 
-    ap = _Parser(prog="zoom-rec", description=__doc__.splitlines()[0])
-    ap.add_argument("--version", action=_VersionAction, nargs=0, help="print the version as JSON")
-    sub = ap.add_subparsers(dest="command", parser_class=_Parser)
-    sub.required = True
 
+def _add_browser_commands(sub: Any, common: argparse.ArgumentParser) -> None:
     p = sub.add_parser("browser", parents=[common], help="open a visible Chrome with the tool's own profile")
     p.set_defaults(func=cmd_browser)
 
     p = sub.add_parser("status", parents=[common], help="verify the browser and the Zoom sign-in")
     p.set_defaults(func=cmd_status)
 
+
+def _add_recording_commands(sub: Any, common: argparse.ArgumentParser) -> None:
     p = sub.add_parser("list", parents=[common], help="list cloud recordings in a date range")
     p.add_argument("--from", dest="from_", type=_iso_date, help="YYYY-MM-DD (default: one year before --to)")
     p.add_argument("--to", type=_iso_date, help="YYYY-MM-DD (default: today)")
@@ -337,11 +441,58 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--root", default="zoom-recordings", help="parent folder used when --out is not given")
     p.add_argument("--execute", action="store_true", help="actually download; without it only a plan is printed")
     p.set_defaults(func=cmd_download)
+
+
+def _add_meeting_commands(sub: Any, common: argparse.ArgumentParser) -> None:
+    p = sub.add_parser("list", parents=[common], help="list upcoming meetings (read-only)")
+    p.add_argument("--to", type=_iso_date, help="YYYY-MM-DD; widen the list past Zoom's default three months")
+    p.add_argument("--max-pages", type=int, default=10, help="stop after this many result pages (15 per page)")
+    p.set_defaults(func=cmd_meetings_list)
+
+    p = sub.add_parser("schedule", parents=[common],
+                       help="schedule one meeting without invitees, Waiting Room off (plan unless --execute)")
+    p.add_argument("--topic", required=True, help="meeting topic")
+    p.add_argument("--date", required=True, help="YYYY-MM-DD in --tz")
+    p.add_argument("--start", required=True, help="start in --tz: HH:MM (24-hour) or H:MM AM/PM; quarter hours")
+    p.add_argument("--duration", required=True, type=int, help="minutes; a multiple of 15")
+    p.add_argument("--tz", required=True, help="IANA time zone, e.g. America/Los_Angeles")
+    p.add_argument("--description", help="optional one-line description")
+    p.add_argument("--execute", action="store_true", help="create the meeting and read it back")
+    p.add_argument("--demo", action="store_true", help="slow down and outline each element on the page")
+    p.set_defaults(func=cmd_meetings_schedule)
+
+    p = sub.add_parser("delete", parents=[common],
+                       help="delete one meeting when number and topic both match (plan unless --execute)")
+    p.add_argument("id", help="meeting number from `meetings list` (digits)")
+    p.add_argument("--expect-topic", required=True, help="the meeting's exact topic; refuse when it differs")
+    p.add_argument("--execute", action="store_true", help="delete it (recoverable for 7 days) and read back")
+    p.add_argument("--demo", action="store_true", help="slow down and outline each element on the page")
+    p.set_defaults(func=cmd_meetings_delete)
+
+
+def build_parser(prog: str = "zoom-rec") -> argparse.ArgumentParser:
+    """`zoom-cli` has command groups; `zoom-rec` additionally keeps its original flat recording commands."""
+    common = _common()
+    ap = _Parser(prog=prog, description=__doc__.splitlines()[0])
+    ap.add_argument("--version", action=_VersionAction, nargs=0, help="print the version as JSON")
+    sub = ap.add_subparsers(dest="command", parser_class=_Parser)
+    sub.required = True
+    _add_browser_commands(sub, common)
+    if prog == "zoom-rec":
+        _add_recording_commands(sub, common)
+    rec = sub.add_parser("recordings", help="cloud recordings: list, show, download, settings")
+    rec_sub = rec.add_subparsers(dest="recordings_command", parser_class=_Parser)
+    rec_sub.required = True
+    _add_recording_commands(rec_sub, common)
+    mtg = sub.add_parser("meetings", help="meetings: list, schedule, delete")
+    mtg_sub = mtg.add_subparsers(dest="meetings_command", parser_class=_Parser)
+    mtg_sub.required = True
+    _add_meeting_commands(mtg_sub, common)
     return ap
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
+def main(argv: list[str] | None = None, prog: str = "zoom-rec") -> int:
+    parser = build_parser(prog)
     try:
         args = parser.parse_args(argv)
     except UsageError as e:
@@ -357,6 +508,8 @@ def main(argv: list[str] | None = None) -> int:
         result = {"ok": False, "error": "needs_sign_in", "action": SIGN_IN_ACTION}
     except ConfigError as e:
         result = {"ok": False, "error": "config", "message": scrub(e)}
+    except guard.SelectorError as e:
+        result = {"ok": False, "error": "selector", "message": scrub(e), "selector": e.detail}
     except guard.GuardError as e:
         result = {"ok": False, "error": "guard_refused", "message": scrub(e)}
     except (zoomweb.PageError, parse.PayloadError) as e:
@@ -368,6 +521,11 @@ def main(argv: list[str] | None = None) -> int:
         result = {"ok": False, "error": "unexpected", "type": type(e).__name__, "message": scrub(e)[:500]}
     emit(result)
     return 0 if result.get("ok") else 1
+
+
+def main_cli(argv: list[str] | None = None) -> int:
+    """Entry point of `zoom-cli`."""
+    return main(argv, prog="zoom-cli")
 
 
 if __name__ == "__main__":  # pragma: no cover
