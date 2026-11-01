@@ -16,7 +16,7 @@ Use this skill when someone wants their Zoom cloud recordings found, inspected o
 
 ## Boundaries
 
-- Read-only by default. The only supported write is `settings ID --disable-passcode --execute`. No deleting, trashing, renaming, moving, uploads, "Add to Zoom Clips", creating passcodes, audience/expiry/viewer permission changes or invitations. Never work around the guards with your own browser scripting. Scheduling a meeting is a separate browser skill (`skills/zoom-meeting/SKILL.md`) and must not be done by weakening recording guards or by adding a Zoom API schedule command.
+- Read-only by default. The only supported write is `settings ID --disable-passcode --execute`. No deleting, trashing, renaming, moving, uploads, "Add to Zoom Clips", creating passcodes, audience/expiry/viewer permission changes or invitations. Never work around the guards with your own browser scripting. Scheduling and deleting meetings is the separate `zoom-cli meetings` group, documented in `skills/zoom-meeting/SKILL.md`, with its own one-shot request permits; it must not be done by weakening recording guards or by adding a Zoom API schedule command.
 - Never sign in for the human, never type into a Zoom or SSO sign-in page, never read or export cookies, storage or tokens.
 - Signed download links are credentials. Do not print, log or save them. Canonical share URLs from `settings` are authorized output and contain no embedded `pwd`; never substitute a download URL for a share URL or read passcode input values.
 - Only drive the tool's own browser, or one the human started and declared with `--cdp` and `--profile-dir`.
@@ -38,6 +38,8 @@ zoom-rec status --profile-dir "$HOME/.zoom-recording/browser-profile" --cdp http
 A persisted profile reuses browser state across runs, but does not guarantee that Zoom stays signed in indefinitely. Before listing or downloading, run `status` and confirm both `browser_verified: true` and `signed_in: true`. If it returns `needs_sign_in`, ask the human to re-authenticate in that same dedicated Chrome window and rerun `status`; do not assume a fixed session lifetime.
 
 ## Commands
+
+The tool is `zoom-cli`; its recording commands are `zoom-cli recordings list|show|settings|download`. `zoom-rec` is the original name and stays a compatible alias: `zoom-rec list` is `zoom-cli recordings list`, and so on, with identical flags and output. The table uses the `zoom-rec` spelling.
 
 Every command prints exactly one JSON object on stdout; progress goes to stderr. `ok: false` comes with `error` and `message` (or `action`).
 

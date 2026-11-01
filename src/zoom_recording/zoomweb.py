@@ -64,6 +64,12 @@ def origin_of(page: Any) -> str:
     return "https://zoom.us"
 
 
+def is_zoom_page(page: Any) -> bool:
+    parts = urlsplit(page.url or "")
+    host = parts.hostname or ""
+    return parts.scheme == "https" and (host == "zoom.us" or host.endswith(".zoom.us"))
+
+
 def _signed_out(page: Any) -> bool:
     parts = urlsplit(page.url or "")
     host = (parts.hostname or "").lower()

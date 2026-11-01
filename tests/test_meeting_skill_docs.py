@@ -1,4 +1,4 @@
-"""The meeting skill is documentation, not a second write path through the recording CLI."""
+"""The meeting skill routes to `zoom-cli meetings` first, keeps its boundaries, and stays example-only."""
 
 import re
 from pathlib import Path
@@ -11,12 +11,14 @@ RECORDING = ROOT / "skills" / "zoom-recording" / "SKILL.md"
 EXAMPLE_DOMAINS = {"example.com", "example.org", "example.net"}
 
 
-def test_meeting_skill_stays_out_of_the_recording_cli():
+def test_meeting_skill_prefers_the_cli_and_keeps_its_boundaries():
     text = SKILL.read_text(encoding="utf-8") + "\n" + UI.read_text(encoding="utf-8")
     lowered = text.lower()
+    for command in ("zoom-cli meetings schedule", "zoom-cli meetings delete", "zoom-cli meetings list",
+                    "--execute", "--expect-topic", "--demo"):
+        assert command in text
     assert "zoom rest api" in lowered
-    assert "not a `zoom-rec` command" in text or "not a zoom-rec command" in lowered
-    assert "waiting room" in lowered
+    assert "waiting room" in lowered and "invitee" in lowered and "recently deleted" in lowered
     assert "re-read the live control" in lowered or "before each click" in lowered
     assert "src/zoom_recording" in text
 

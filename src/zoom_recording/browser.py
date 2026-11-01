@@ -199,9 +199,14 @@ def verify_own_browser(session: Session) -> dict[str, Any]:
                        "directory; refusing to drive it (declare it with --profile-dir)"}
 
 
-def connect(p: Any, session: Session) -> tuple[Any, Any]:
-    """Attach to the running Chrome. Callers only let Playwright exit; the browser stays open."""
-    browser = p.chromium.connect_over_cdp(session.endpoint, timeout=15000)
+def connect(p: Any, session: Session, slow_mo: int = 0) -> tuple[Any, Any]:
+    """Attach to the running Chrome. Callers only let Playwright exit; the browser stays open.
+
+    `slow_mo` (milliseconds) slows every Playwright action, for `--demo`."""
+    if slow_mo:
+        browser = p.chromium.connect_over_cdp(session.endpoint, timeout=15000, slow_mo=slow_mo)
+    else:
+        browser = p.chromium.connect_over_cdp(session.endpoint, timeout=15000)
     if not browser.contexts:
         raise RuntimeError("browser has no default context")
     return browser, browser.contexts[0]
@@ -217,5 +222,14 @@ def work_tab(context: Any) -> Any:
     for page in context.pages:
         parts = urlsplit(page.url)
         if is_zoom_web(page.url) and parts.path.startswith("/recording"):
+            return page
+    return context.new_page()
+
+
+def meeting_tab(context: Any) -> Any:
+    """Reuse a tab already on a Zoom meetings page, else open one."""
+    for page in context.pages:
+        parts = urlsplit(page.url)
+        if is_zoom_web(page.url) and (parts.path == "/meeting" or parts.path.startswith("/meeting/")):
             return page
     return context.new_page()
