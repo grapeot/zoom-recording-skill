@@ -667,6 +667,60 @@ def test_readback_compare_flags_drift():
     assert not meetings.compare(spec(), FORM, None, True)["time_zone"]["ok"]
 
 
+class DropdownPage:
+    """The duration-hours option list is still closing (visible for `closing_polls` more 50 ms polls,
+    or forever with None) when the minutes dropdown is next. Both lists offer "0"."""
+
+    def __init__(self, closing_polls, monkeypatch):
+        self.closing, self.clock, self.opened, self.events = closing_polls, 0.0, False, []
+        monkeypatch.setattr(meetings, "time", SimpleNamespace(monotonic=lambda: self.clock))
+        self.box = Loc({"tag": "INPUT", "role": "combobox", "label": "select duration minutes"},
+                       on_click=self._open)
+        self.option = Loc({"tag": "DIV", "role": "option", "label": "0"},
+                          on_click=lambda: self.events.append("pick"))
+        self.option.count = lambda: (self.closing != 0) + self.opened
+        self.option.first = self.option
+
+    def _open(self):
+        self.events.append(("open", self.closing))
+        self.opened = True
+
+    def get_by_role(self, role, name=None, exact=None):
+        if role == "listbox":
+            return SimpleNamespace(count=lambda: (self.closing != 0) + self.opened)
+        assert (role, name, exact) == ("option", "0", True)
+        return self.option
+
+    def wait_for_timeout(self, ms):
+        self.clock += ms / 1000
+        if self.closing:
+            self.closing -= 1
+
+
+def pick_minutes(page):
+    form = SimpleNamespace(locator=lambda sel: page.box)
+    meetings._pick(page, form, "select duration minutes", "0", Demo(False), lambda: "30")
+
+
+def test_pick_waits_for_the_previous_dropdown_to_close(monkeypatch):
+    page = DropdownPage(closing_polls=6, monkeypatch=monkeypatch)  # about 300 ms
+    pick_minutes(page)
+    # opened only once the hours list was gone, so exactly one "0" was on the page when picking
+    assert page.events == [("open", 0), "pick"]
+    assert page.box.clicks == 1 and page.option.clicks == 1 and page.clock == pytest.approx(0.3)
+
+
+def test_pick_fails_closed_when_the_previous_dropdown_never_closes(capsys, monkeypatch, fake_meetings):
+    page = DropdownPage(closing_polls=None, monkeypatch=monkeypatch)
+    monkeypatch.setattr(meetings, "schedule_execute", lambda *a: pick_minutes(page))
+    code, obj = run(capsys, SCHEDULE + ["--execute"])
+    assert code == 1 and obj["ok"] is False and obj["error"] == "page"
+    assert "previous dropdown to close did not happen within 10 s" in obj["message"]
+    assert obj["execution_attempted"] is False and obj["outcome_unknown"] is False and obj["allowed_requests"] == []
+    assert page.events == [] and page.box.clicks == 0 and page.option.clicks == 0
+    assert page.clock >= 10
+
+
 # ------------------------------------------------------------------ delete with fakes
 
 class DeletePage:
