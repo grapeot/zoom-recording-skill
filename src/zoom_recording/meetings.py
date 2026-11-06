@@ -445,6 +445,9 @@ def _open_form(page: Any, demo: Demo, timeout_ms: int) -> tuple[Any, dict[str, s
 def _pick(page: Any, form: Any, label: str, option: str, demo: Demo, read: Callable[[], str | None],
           typed: str | None = None, fill_op: str | None = None) -> None:
     box = combobox(form, label)
+    # A just-picked dropdown keeps its option list visible for ~300 ms while it closes; opening the
+    # next one before then puts two lists on the page (hours and minutes both offer "0").
+    wait_until(page, lambda: page.get_by_role("listbox").count() == 0, "the previous dropdown to close")
     demo.show(box, f'combobox · "{label}" · {read()} → {option}', page)
     guard.meeting_click(box, "open_combobox", label)
     if typed is not None and fill_op is not None:

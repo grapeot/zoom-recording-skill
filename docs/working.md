@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-11-06
+
+- Fix: `meetings schedule --execute` at full speed could refuse to pick the duration minutes. After the hours option was clicked, the hours option list stayed visible for about 300 ms while it closed; opening the minutes dropdown right away put two lists on the page, both offering "0", and the guard refused the click with `pick_option: expected exactly one '0', found 2`. It failed closed (nothing clicked, no meeting created), and reproduced twice on 2026-11-05 at full speed. `--demo` never hit it because every step is slowed down.
+- `_pick` now waits until no option list (`role=listbox`) is visible before opening the next dropdown, using the same 50 ms polling and 10 s limit as the other waits. If a list never closes, the command stops with a `page` error before clicking anything. The click guard is unchanged.
+- Live verification: with the fix, a full-speed `meetings schedule --execute` created the meeting and verified the readback (16.9 s end to end). `meetings delete` does not open dropdowns and is unaffected.
+- Offline: a fake page keeps the previous list visible for six polls and asserts the minutes dropdown opens only after it is gone and exactly one "0" is picked; a list that never closes yields a structured `page` error with nothing clicked and no request attempted. Both tests fail without the fix with the live error.
+
 ### 2026-10-31
 
 - One CLI, `zoom-cli`, with groups: `browser`, `status`, `recordings list|show|download|settings`, `meetings list|schedule|delete`. `zoom-rec` stays a compatible alias: its flat commands, flags and output are unchanged, and it also accepts the new groups. Console script `zoom-cli` added to `pyproject.toml`.
@@ -41,6 +48,7 @@
 
 ## Lessons Learned
 
+- 2026-11-06: A Zoom dropdown's option list stays visible for about 300 ms after an option is picked. Waiting for the next list's option is not enough when two lists share option names (duration hours and minutes both offer "0"); wait for the previous list to close before opening the next one. Slowed-down demo runs hide such races, so verify writes at full speed too.
 - 2026-10-31: The schedule form's save endpoint, `/rest/meeting/save`, contains none of the recording guard's mutation words, so the recording guard alone would have let it through. Meeting commands need their own deny-by-default rule for non-GET requests under `/meeting` and `/rest/meeting`.
 - 2026-10-31: Capture a write's request with the request aborted before writing its permit; a permit written from the UI's appearance would have been wrong (`2:30` on screen, `02:30` in the body). A strict permit turns such a surprise into a refused, harmless save.
 - 2026-10-31: Zoom's comboboxes swap elements after interaction (input to text span), the time-zone input's accessible name comes from `aria-labelledby` ("Time Zone") rather than its `aria-label`, options become visible a moment after they exist, and the duration minutes field only keeps a clicked option. Query controls by `[role=combobox][aria-label=...]` each time, read `value` or `innerText`, and wait for visibility and readback instead of sleeping.
